@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fuzzy-surgical"
+dynamic = ["version"]
+description = "Terminal fuzzy finder with syntax highlighted results and surgical line replacement"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Crissy Moon" }]
+keywords = ["tui", "fuzzy-search", "curses", "syntax-highlighting", "editor", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console :: Curses",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Software Development :: User Interfaces",
+    "Topic :: Text Editors",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "pygments>=2.15.0",
+    "windows-curses>=2.3.1; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.scripts]
+fuzzy-surgical = "fuzzy_surgical.cli:main"
+
+[project.urls]
+Homepage = "https://xcaliburmoon.net/"
+Repository = "https://github.com/crissymoon/xcm-fuzzy-surgical"
+Issues = "https://github.com/crissymoon/xcm-fuzzy-surgical/issues"
+Changelog = "https://github.com/crissymoon/xcm-fuzzy-surgical/releases"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+include = ["fuzzy_surgical*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "fuzzy_surgical.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]

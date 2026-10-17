@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "name": "fuzzy-surgical",
+  "display_name": "FuzzySurgical",
+  "version": "0.1.0",
+  "tagline": "A terminal fuzzy finder with syntax highlighted results and surgical line replacement.",
+  "summary": "FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, and replaces a single line only after an explicit confirmation.",
+  "author": {
+    "name": "Crissy Moon",
+    "website": "https://xcaliburmoon.net/"
+  },
+  "repository": {
+    "url": "https://github.com/crissymoon/xcm-fuzzy-surgical.git",
+    "web_url": "https://github.com/crissymoon/xcm-fuzzy-surgical",
+    "slug": "crissymoon/xcm-fuzzy-surgical"
+  },
+  "license": {
+    "spdx": "MIT",
+    "summary": "MIT License, copyright 2026 Crissy Moon."
+  },
+  "python": {
+    "requires": "3.9",
+    "tested": ["3.9", "3.12"]
+  },
+  "platforms": {
+    "intro": "Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.",
+    "items": [
+      {
+        "name": "Linux and macOS",
+        "notes": "Native curses support. Use the POSIX installer."
+      },
+      {
+        "name": "WSL and Git Bash",
+        "notes": "Runs the POSIX installer inside the Unix-like shell."
+      },
+      {
+        "name": "Windows PowerShell and cmd",
+        "notes": "The PowerShell installer adds windows-curses and a launcher to the user PATH."
+      }
+    ]
+  },
+  "highlights": [
+    "Fuzzy line search across every indexed text file, with literal substring matches ranked above scattered subsequences",
+    "Syntax highlighted results and editor context with a fallback highlighter when Pygments is unavailable",
+    "Preview rows scroll horizontally to the matched text instead of showing column zero",
+    "Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path",
+    "Surgical line editing with surrounding context, an explicit confirmation step and an atomic write",
+    "Automatic backup of the original file before a write",
+    "Bounded, crash safe indexing with permission, binary file and symlink loop guards",
+    "Single file JSON metadata that regenerates this README through a checked in script"
+  ],
+  "install": {
+    "intro": "The platform installers create a local virtual environment, install dependencies and expose the fuzzy-surgical command. The package is also installable with pipx or runnable straight from a checkout.",
+    "blocks": [
+      {
+        "id": "posix",
+        "title": "Linux, macOS, WSL and Git Bash",
+        "language": "bash",
+        "commands": ["./install.sh", "fuzzy-surgical"],
+        "notes": [
+          "The installer writes a launcher, usually to $HOME/.local/bin, and adds that directory to your shell PATH.",
+          "Open a new terminal after installing so the updated PATH is visible."
+        ],
+        "options": [
+          {
+            "command": "FUZZY_SURGICAL_BIN_DIR=\"$HOME/bin\" ./install.sh",
+            "description": "Install the launcher somewhere else."
+          },
+          {
+            "command": "./install.sh --uninstall",
+            "description": "Remove the launcher and the PATH block."
+          },
+          {
+            "command": "./install.sh --uninstall --purge",
+            "description": "Also remove the local virtual environment."
+          }
+        ]
+      },
+      {
+        "id": "windows",
+        "title": "Native Windows PowerShell or cmd",
+        "language": "powershell",
+        "commands": [
+          "powershell -ExecutionPolicy Bypass -File .\\install.ps1",
+          "fuzzy-surgical"
+        ],
+        "notes": [
+          "The installer creates venv, installs windows-curses, writes a launcher under %LOCALAPPDATA%\\Programs\\fuzzy-surgical and adds that folder to the user PATH.",
+          "Open a new terminal after installing."
+        ],
+        "options": []
+      },
+      {
+        "id": "pipx",
+        "title": "pipx or pip",
+        "language": "bash",
+        "commands": ["pipx install .", "fuzzy-surgical"],
+        "notes": [
+          "The package exposes the fuzzy-surgical console script. Use python -m pip install . inside a virtual environment if pipx is unavailable."
+        ],
+        "options": []
+      },
+      {
+        "id": "source",
+        "title": "Run without installing",
+        "language": "bash",
+        "commands": ["python3 main.py", "python3 main.py ~/projects"],
+        "notes": [
+          "Install requirements.txt first. main.py is a thin launcher over the fuzzy_surgical package."
+        ],
+        "options": []
+      }
+    ]
+  },
+  "quickstart": {
+    "intro": "Run fuzzy-surgical with no arguments to open the directory picker. Type to fuzzy filter folders, press Enter to open one, then press Enter on search this directory to start indexing. Starting in the picker keeps launches from the desktop or documents folder safe.",
+    "commands": [
+      "fuzzy-surgical",
+      "fuzzy-surgical ~/projects",
+      "fuzzy-surgical . --extensions .py .js .md",
+      "fuzzy-surgical . --ignore .git node_modules .venv",
+      "fuzzy-surgical . --no-picker"
+    ]
+  },
+  "cli": {
+    "intro": "Every flag has a safe default, so positional arguments are enough for normal use.",
+    "columns": ["Flag", "Value", "Description"],
+    "rows": [
+      ["directory", "PATH", "Directory to search. Omit it to choose a directory in the TUI."],
+      ["-i, --ignore", "PATTERN ...", "Directory names or glob patterns to skip while indexing."],
+      ["-e, --extensions", "EXT ...", "Only index these file extensions, for example .py or py."],
+      ["--no-picker", "none", "Skip the picker and search the current directory."],
+      ["--max-files", "INT", "Maximum number of files to index. Default 8000."],
+      ["--max-file-size", "INT", "Maximum bytes read per file. Default 1000000."],
+      ["--max-lines-per-file", "INT", "Maximum lines indexed per file. Default 5000."],
+      ["--max-total-lines", "INT", "Maximum lines indexed in total. Default 500000."]
+    ]
+  },
+  "controls": [
+    {
+      "view": "Search",
+      "items": [
+        ["Type", "Fuzzy search every indexed line. Literal hits rank first and previews scroll to the match."],
+        ["Up / Down", "Move the selection one row."],
+        ["Page Up / Page Down", "Move the selection one page."],
+        ["Left / Right", "Scroll long code lines horizontally."],
+        ["Enter", "Edit the selected line."],
+        ["F2", "Open the directory picker."],
+        ["F1", "Show help."],
+        ["Ctrl+U", "Clear the search."],
+        ["Esc", "Clear the search, then quit when the search is already empty."],
+        ["Ctrl+X / F10", "Quit."]
+      ]
+    },
+    {
+      "view": "Directory picker",
+      "items": [
+        ["Type", "Fuzzy filter directories."],
+        ["Up / Down", "Move the selection."],
+        ["Enter", "Open the selected folder or start searching the current folder."],
+        ["Backspace", "Delete filter text, or move to the parent directory when the filter is empty."],
+        ["Esc", "Cancel and return to the previous view."]
+      ]
+    },
+    {
+      "view": "Editor",
+      "items": [
+        ["Up / Down", "Switch the active context line."],
+        ["Left / Right", "Move the cursor."],
+        ["Home / End", "Jump to the start or end of the line."],
+        ["Backspace / Delete", "Edit the line."],
+        ["Enter", "Confirm the edit, then press y to write or n to cancel."],
+        ["Esc", "Discard all edits."],
+        ["F1", "Show help."]
+      ]
+    }
+  ],
+  "safety": {
+    "intro": "The indexer never follows directory symlinks and skips unreadable, binary or oversized paths instead of aborting. Indexing is capped so opening a large folder cannot exhaust memory:",
+    "limits": [
+      ["Files", "8,000"],
+      ["Bytes per file", "1,000,000"],
+      ["Lines per file", "5,000"],
+      ["Lines in total", "500,000"]
+    ],
+    "notes": [
+      "Writes are atomic, keep a backup of the original file and only happen after confirmation.",
+      "The directory picker validates every target and falls back to a readable directory instead of crashing.",
+      "Terminal resizes and small terminals are guarded, so drawing is clipped instead of raising."
+    ]
+  },
+  "development": {
+    "intro": "The README is generated from meta/project.json. Edit the JSON, then regenerate and verify it before committing.",
+    "commands": [
+      "python3 -m venv venv",
+      "venv/bin/python -m pip install -r requirements-dev.txt",
+      "venv/bin/python -m pytest tests/",
+      "venv/bin/python scripts/build_readme.py",
+      "venv/bin/python scripts/build_readme.py --check",
+      "venv/bin/python -m flake8 main.py fuzzy_surgical tests scripts"
+    ],
+    "windows_commands": [
+      "py -m venv venv",
+      "venv\\Scripts\\python -m pip install -r requirements-dev.txt",
+      "venv\\Scripts\\python -m pytest tests/",
+      "venv\\Scripts\\python scripts\\build_readme.py",
+      "venv\\Scripts\\python scripts\\build_readme.py --check",
+      "venv\\Scripts\\python -m flake8 main.py fuzzy_surgical tests scripts"
+    ],
+    "notes": [
+      "scripts/build_readme.py --check fails when README.md is stale or when the version in meta/project.json does not match fuzzy_surgical/__init__.py.",
+      "The README sync workflow regenerates README.md on main after metadata changes, and CI rejects stale documentation on pull requests."
+    ]
+  },
+  "requirements": [
+    ["Python", "3.9 or newer"],
+    ["Pygments", "2.15 or newer, used for syntax highlighting"],
+    ["curses", "Included with Python on Linux and macOS. Install windows-curses on Windows."]
+  ],
+  "community": {
+    "intro": "Issues and pull requests are welcome at the repository. Keep changes focused, add tests for behavior changes, run the checks above, and regenerate the README when metadata changes.",
+    "security": "Report security sensitive issues privately to the maintainer through the website contact link instead of opening a public issue."
+  },
+  "links": {
+    "website": "https://xcaliburmoon.net/",
+    "repository": "https://github.com/crissymoon/xcm-fuzzy-surgical",
+    "issues": "https://github.com/crissymoon/xcm-fuzzy-surgical/issues"
+  }
+}

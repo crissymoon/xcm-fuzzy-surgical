@@ -1,0 +1,2 @@
+pygments>=2.15.0
+windows-curses>=2.3.1; sys_platform == "win32"

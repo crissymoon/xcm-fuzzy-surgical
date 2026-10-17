@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+# Install fuzzy-surgical on Linux, macOS, WSL and Git Bash for Windows.
+# Usage: ./install.sh [--uninstall [--purge]]
+
+set -euo pipefail
+
+if [ -z "${BASH_VERSION:-}" ]; then
+    printf 'Please run this installer with bash: bash install.sh\n' >&2
+    exit 1
+fi
+
+APP_NAME="fuzzy-surgical"
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+    SOURCE_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd -P)"
+    SOURCE="$(readlink "$SOURCE")"
+    case "$SOURCE" in
+        /*) ;;
+        *) SOURCE="$SOURCE_DIR/$SOURCE" ;;
+    esac
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd -P)"
+PROJECT_DIR="$SCRIPT_DIR"
+VENV_DIR="$PROJECT_DIR/venv"
+BIN_DIR="${FUZZY_SURGICAL_BIN_DIR:-$HOME/.local/bin}"
+LAUNCHER="$BIN_DIR/$APP_NAME"
+MANAGED_START="# >>> fuzzy-surgical >>>"
+MANAGED_END="# <<< fuzzy-surgical <<<"
+
+usage() {
+    cat <<USAGE
+Usage: ./install.sh [--uninstall [--purge]]
+
+Installs the fuzzy-surgical launcher, creates a local virtual environment and
+adds the launcher directory to your shell PATH.
+
+Environment:
+  FUZZY_SURGICAL_BIN_DIR   install location (default: \$HOME/.local/bin)
+  FUZZY_SURGICAL_PYTHON    Python interpreter used to create the venv
+USAGE
+}
+
+remove_path_block() {
+    local rc="$1"
+    [ -f "$rc" ] || return 0
+    if grep -Fq "$MANAGED_START" "$rc"; then
+        awk -v start="$MANAGED_START" -v end="$MANAGED_END" '
+            $0 == start { skip = 1; next }
+            $0 == end   { skip = 0; next }
+            !skip
+        ' "$rc" > "$rc.fuzzy-surgical.tmp"
+        mv "$rc.fuzzy-surgical.tmp" "$rc"
+    fi
+}
+
+add_path_block() {
+    local rc="$1"
+    local line="$2"
+    mkdir -p "$(dirname "$rc")"
+    touch "$rc"
+    if ! grep -Fq "$MANAGED_START" "$rc"; then
+        {
+            printf '\n%s\n' "$MANAGED_START"
+            printf '%s\n' "$line"
+            printf '%s\n' "$MANAGED_END"
+        } >> "$rc"
+    fi
+}
+
+uninstall() {
+    local purge="${1:-}"
+    rm -f "$LAUNCHER"
+    for rc in \
+        "$HOME/.zshrc" \
+        "$HOME/.bashrc" \
+        "$HOME/.bash_profile" \
+        "$HOME/.profile" \
+        "$HOME/.config/fish/config.fish"
+    do
+        remove_path_block "$rc"
+    done
+    if [ "$purge" = "--purge" ]; then
+        rm -rf "$VENV_DIR"
+    fi
+    printf 'Removed %s\n' "$LAUNCHER"
+    if [ "$purge" = "--purge" ]; then
+        printf 'Removed %s\n' "$VENV_DIR"
+    fi
+}
+
+case "${1:-}" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    --uninstall|uninstall)
+        uninstall "${2:-}"
+        exit 0
+        ;;
+    "")
+        ;;
+    *)
+        printf 'Unknown option: %s\n' "$1" >&2
+        usage >&2
+        exit 1
+        ;;
+esac
+
+discover_python() {
+    if [ -n "${FUZZY_SURGICAL_PYTHON:-}" ]; then
+        printf '%s' "$FUZZY_SURGICAL_PYTHON"
+        return 0
+    fi
+    if command -v python3 >/dev/null 2>&1 &&
+        python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null
+    then
+        printf 'python3'
+        return 0
+    fi
+    if command -v python >/dev/null 2>&1 &&
+        python -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null
+    then
+        printf 'python'
+        return 0
+    fi
+    return 1
+}
+
+VENV_PY=""
+if [ -x "$VENV_DIR/bin/python" ]; then
+    VENV_PY="$VENV_DIR/bin/python"
+elif [ -x "$VENV_DIR/Scripts/python.exe" ]; then
+    VENV_PY="$VENV_DIR/Scripts/python.exe"
+fi
+
+if [ -z "$VENV_PY" ]; then
+    printf 'Creating virtual environment in %s\n' "$VENV_DIR"
+    if PYTHON_BIN="$(discover_python)"; then
+        "$PYTHON_BIN" -m venv "$VENV_DIR"
+    elif command -v py >/dev/null 2>&1 &&
+        py -3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null
+    then
+        py -3 -m venv "$VENV_DIR"
+    else
+        printf 'Error: Python 3.8 or newer was not found.\n' >&2
+        exit 1
+    fi
+
+    if [ -x "$VENV_DIR/bin/python" ]; then
+        VENV_PY="$VENV_DIR/bin/python"
+    elif [ -x "$VENV_DIR/Scripts/python.exe" ]; then
+        VENV_PY="$VENV_DIR/Scripts/python.exe"
+    else
+        printf 'Error: the virtual environment was not created.\n' >&2
+        exit 1
+    fi
+fi
+
+printf 'Installing dependencies\n'
+"$VENV_PY" -m pip install --upgrade pip >/dev/null 2>&1 || true
+if ! "$VENV_PY" -m pip install -r "$PROJECT_DIR/requirements.txt"; then
+    printf 'Error: dependency installation failed.\n' >&2
+    exit 1
+fi
+
+if ! "$VENV_PY" -c 'import pygments' >/dev/null 2>&1; then
+    printf 'Error: Pygments is required for colour highlighting.\n' >&2
+    exit 1
+fi
+
+if ! "$VENV_PY" -c 'import curses' >/dev/null 2>&1; then
+    printf 'Error: curses is unavailable.\n' >&2
+    printf 'On Windows run: %s -m pip install windows-curses\n' "$VENV_PY" >&2
+    exit 1
+fi
+
+mkdir -p "$BIN_DIR"
+PROJECT_Q="$(printf '%q' "$PROJECT_DIR")"
+VENV_Q="$(printf '%q' "$VENV_PY")"
+
+cat > "$LAUNCHER" <<LAUNCHER_EOF
+#!/usr/bin/env bash
+# Generated by fuzzy-surgical install.sh
+PROJECT_DIR=$PROJECT_Q
+VENV_PY=$VENV_Q
+if [ -x "\$VENV_PY" ]; then
+    PYTHON="\$VENV_PY"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON=python3
+else
+    PYTHON=python
+fi
+exec "\$PYTHON" "\$PROJECT_DIR/main.py" "\$@"
+LAUNCHER_EOF
+chmod +x "$LAUNCHER"
+
+SHELL_NAME="$(basename "${SHELL:-sh}")"
+case "$SHELL_NAME" in
+    fish)
+        RC_FILE="$HOME/.config/fish/config.fish"
+        add_path_block "$RC_FILE" "fish_add_path \"$BIN_DIR\""
+        ;;
+    zsh)
+        RC_FILE="$HOME/.zshrc"
+        add_path_block "$RC_FILE" "export PATH=\"$BIN_DIR:\$PATH\""
+        ;;
+    bash)
+        if [ "$(uname -s)" = "Darwin" ] && [ -f "$HOME/.bash_profile" ]; then
+            RC_FILE="$HOME/.bash_profile"
+        else
+            RC_FILE="$HOME/.bashrc"
+        fi
+        add_path_block "$RC_FILE" "export PATH=\"$BIN_DIR:\$PATH\""
+        ;;
+    *)
+        RC_FILE="$HOME/.profile"
+        add_path_block "$RC_FILE" "export PATH=\"$BIN_DIR:\$PATH\""
+        ;;
+esac
+
+printf '\nInstalled %s\n' "$LAUNCHER"
+printf 'Project: %s\n' "$PROJECT_DIR"
+printf 'Shell:   %s (PATH entry added)\n' "$RC_FILE"
+printf '\nOpen a new terminal and run:\n  %s\n' "$APP_NAME"
+printf 'Or load the PATH now:\n  source %s\n' "$RC_FILE"
