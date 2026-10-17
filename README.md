@@ -2,7 +2,6 @@
 
 # FuzzySurgical
 
-[![CI](https://github.com/crissymoon/xcm-fuzzy-surgical/actions/workflows/ci.yml/badge.svg)](https://github.com/crissymoon/xcm-fuzzy-surgical/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/crissymoon/xcm-fuzzy-surgical/blob/main/LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://github.com/crissymoon/xcm-fuzzy-surgical)
 [![Website](https://img.shields.io/badge/website-xcaliburmoon.net-black.svg)](https://xcaliburmoon.net/)
@@ -186,7 +185,7 @@ venv\Scripts\python -m flake8 main.py fuzzy_surgical tests scripts
 ```
 
 - scripts/build_readme.py --check fails when README.md is stale or when the version in meta/project.json does not match fuzzy_surgical/__init__.py.
-- The README sync workflow regenerates README.md on main after metadata changes, and CI rejects stale documentation on pull requests.
+- Regenerate README.md with scripts/build_readme.py after editing meta/project.json, and run the --check mode before committing.
 
 ## Requirements
 

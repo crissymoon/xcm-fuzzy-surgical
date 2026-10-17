@@ -209,7 +209,7 @@
     ],
     "notes": [
       "scripts/build_readme.py --check fails when README.md is stale or when the version in meta/project.json does not match fuzzy_surgical/__init__.py.",
-      "The README sync workflow regenerates README.md on main after metadata changes, and CI rejects stale documentation on pull requests."
+      "Regenerate README.md with scripts/build_readme.py after editing meta/project.json, and run the --check mode before committing."
     ]
   },
   "requirements": [

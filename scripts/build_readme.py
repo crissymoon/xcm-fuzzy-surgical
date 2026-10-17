@@ -2,7 +2,7 @@
 """Render README.md from meta/project.json.
 
 The JSON file is the single source of truth for documentation content. Run this
-script after editing it, or use --check in CI to reject a stale README.
+script after editing it, or use --check before committing to reject a stale README.
 """
 
 from __future__ import annotations
@@ -143,14 +143,11 @@ def _code_block(language: str, commands: Sequence[str]) -> str:
 
 def _badges(metadata: Dict[str, Any]) -> str:
     repository = metadata["repository"]["web_url"]
-    slug = metadata["repository"]["slug"]
     python_requires = metadata["python"]["requires"]
     website = metadata["links"]["website"]
     website_host = urlparse(website).netloc or website
     return "\n".join(
         [
-            f"[![CI](https://github.com/{slug}/actions/workflows/ci.yml/badge.svg)]"
-            f"({repository}/actions/workflows/ci.yml)",
             f"[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)]"
             f"({repository}/blob/main/LICENSE)",
             f"[![Python {python_requires}+](https://img.shields.io/badge/python-"
