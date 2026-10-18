@@ -10,6 +10,13 @@ import curses.ascii
 
 from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.directory_navigator import DirEntry, DirectoryNavigator
+from fuzzy_surgical.mouse import (
+    MOUSE_KEY,
+    SCROLL_LINES,
+    ClickTracker,
+    MouseEvent,
+    read_mouse,
+)
 from fuzzy_surgical.renderer import fill_row, safe_addstr, shorten, window_size
 from fuzzy_surgical.utils import (
     display_path,
@@ -37,6 +44,7 @@ class DirectoryPicker:
         self.selected = 0
         self.scroll = 0
         self.entries: List[DirEntry] = []
+        self.click_tracker = ClickTracker()
         self._refresh()
 
     def run(self) -> Optional[Path]:
@@ -51,6 +59,13 @@ class DirectoryPicker:
             if key in (24, 17, curses.KEY_F10):  # Ctrl+X, Ctrl+Q, F10
                 return None
             if key == curses.KEY_RESIZE:
+                continue
+            if key == MOUSE_KEY:
+                event = read_mouse(self.stdscr)
+                if event is not None:
+                    chosen = self._handle_mouse(event)
+                    if chosen is not None:
+                        return chosen
                 continue
             if key == curses.KEY_UP:
                 self._move(-1)
@@ -120,9 +135,26 @@ class DirectoryPicker:
         self.selected = max(0, min(len(self.entries) - 1, self.selected + delta))
         self._ensure_visible()
 
+    def _handle_mouse(self, event: MouseEvent) -> Optional[Path]:
+        if event.is_scroll:
+            self._move(event.direction * SCROLL_LINES)
+            return None
+        top = 4
+        offset = event.y - top
+        if offset < 0 or offset >= self._visible_rows():
+            return None
+        index = self.scroll + offset
+        if index < 0 or index >= len(self.entries):
+            return None
+        self.selected = index
+        self._ensure_visible()
+        if self.click_tracker.classify(event) == "double":
+            return self._activate()
+        return None
+
     def _visible_rows(self) -> int:
         height, _ = window_size(self.stdscr)
-        return max(1, height - 5)
+        return max(1, height - 6)
 
     def _ensure_visible(self) -> None:
         visible = self._visible_rows()
@@ -190,7 +222,7 @@ class DirectoryPicker:
         )
 
         top = 4
-        bottom = height - 2
+        bottom = height - 3
         visible = max(1, bottom - top + 1)
         self._ensure_visible()
 

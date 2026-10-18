@@ -23,6 +23,8 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Fuzzy line search across every indexed text file, with literal substring matches ranked above scattered subsequences
 - Syntax highlighted results and editor context with a fallback highlighter when Pygments is unavailable
 - Preview rows scroll horizontally to the matched text instead of showing column zero
+- Mouse clicks select result and browser rows, place the caret at the clicked cell in both editors, and double clicks open the selected item
+- Wheel and trackpad scrolling works in the result list, directory picker, file browser and both editors, including the older ncurses wheel-down encoding used by macOS
 - Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file
 - Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path
 - Surgical line editing with surrounding context and a save that proves the disk copy
@@ -130,6 +132,8 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | file.py:12 | Jump to line 12 in a matching file. Partial paths, bare file names and Windows paths work. If several files share the name, the status bar names the chosen file and asks for a folder. |
 | Up / Down | Move the selection one row. |
 | Page Up / Page Down | Move the selection one page. |
+| Mouse click | Select a row. Double click opens the line editor. |
+| Mouse wheel / trackpad | Scroll three rows. |
 | Left / Right | Scroll long code lines horizontally. |
 | Enter | Edit the selected line after reloading it from disk. |
 | F3 | Browse folders and edit whole files. |
@@ -147,6 +151,8 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | --- | --- |
 | Type | Fuzzy filter directories. |
 | Up / Down | Move the selection. |
+| Mouse click | Select a folder. Double click opens it. |
+| Mouse wheel / trackpad | Scroll three rows. |
 | Enter | Open the selected folder or start searching the current folder. |
 | Backspace | Delete filter text, or move to the parent directory when the filter is empty. |
 | Esc | Cancel and return to the previous view. |
@@ -158,6 +164,8 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | F3 | Open the browser from the search view. |
 | Type | Fuzzy filter the current folder. |
 | Up / Down | Move the selection. |
+| Mouse click | Select a row. Double click opens a folder or edits the file. |
+| Mouse wheel / trackpad | Scroll three rows. |
 | Enter | Open a folder or edit the selected file in the full editor. |
 | Backspace | Delete filter text, or move to the parent folder when the filter is empty. |
 | Ctrl+U | Clear the filter. |
@@ -170,6 +178,8 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | F4 | Open the selected file straight from the search view. |
 | Arrows / Home / End | Move the cursor, wrapping between lines. |
 | Page Up / Page Down | Move one page. |
+| Mouse click | Place the cursor at the clicked cell. |
+| Mouse wheel / trackpad | Scroll three lines. |
 | Enter | Split the current line. |
 | Backspace / Delete | Delete backwards or forwards, joining lines at the edges. |
 | Tab | Insert four spaces. |
@@ -185,6 +195,8 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Key | Action |
 | --- | --- |
 | Up / Down | Switch the active context line. |
+| Mouse click | Place the caret in the edit line, or switch the context line. |
+| Mouse wheel / trackpad | Move the active context line by one. |
 | Left / Right | Move the cursor. |
 | Home / End | Jump to the start or end of the line. |
 | Backspace / Delete | Edit the line. |
@@ -220,6 +232,7 @@ The indexer never follows directory symlinks and skips unreadable, binary or ove
 - Snapshot defaults are 25 versions per file, 4 MB per snapshot and 64 MB in total, and old snapshots are pruned automatically.
 - History is best effort. A missing or locked database never blocks a save, and --no-history disables snapshots entirely.
 - Terminal resizes and small terminals are guarded, so drawing is clipped instead of raising.
+- Mouse support is optional. The app still runs when the terminal or curses build refuses mouse reporting, and every action has a keyboard equivalent. Hold Shift or Option to select text while mouse reporting is active.
 
 ## Development
 

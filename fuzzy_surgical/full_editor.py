@@ -23,9 +23,17 @@ import curses.ascii
 from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.file_writer import FileWriteError, WriteResult, file_digest, write_text
 from fuzzy_surgical.history import SnapshotStore
+from fuzzy_surgical.mouse import (
+    MOUSE_KEY,
+    SCROLL_LINES,
+    ClickTracker,
+    MouseEvent,
+    read_mouse,
+)
 from fuzzy_surgical.renderer import (
     draw_box,
     draw_code_line,
+    index_for_display_column,
     safe_addstr,
     sanitize,
     shorten,
@@ -268,6 +276,11 @@ class TextBuffer:
         self.cursor_row = max(0, min(len(self.lines) - 1, line_number - 1))
         self._clamp()
 
+    def set_cursor(self, row: int, column: int) -> None:
+        """Place the cursor without touching text or the undo history."""
+        self.cursor_row = max(0, min(len(self.lines) - 1, row))
+        self.cursor_col = max(0, min(len(self.lines[self.cursor_row]), column))
+
     def undo(self) -> bool:
         if not self.undo_stack:
             return False
@@ -321,6 +334,7 @@ class FullEditor:
         self.history_entries = []
         self.history_index = 0
         self.history_scroll = 0
+        self.click_tracker = ClickTracker()
 
     def edit(self, file_path: Path) -> bool:
         """Open the file and return True when at least one save happened."""
@@ -345,6 +359,11 @@ class FullEditor:
             if key is None:
                 continue
             if key == curses.KEY_RESIZE:
+                continue
+            if key == MOUSE_KEY:
+                event = read_mouse(self.stdscr)
+                if event is not None:
+                    self._handle_mouse(event)
                 continue
             if self.mode == "edit":
                 if self._handle_edit_key(key):
@@ -414,6 +433,89 @@ class FullEditor:
             if char:
                 self.buffer.insert_text(char)
         return False
+
+    def _handle_mouse(self, event: MouseEvent) -> None:
+        """Apply a click or wheel tick to the active editor mode."""
+        if event.is_scroll:
+            self._scroll_mouse(event.direction)
+            return
+
+        if self.mode in ("saved", "help"):
+            self.mode = "edit"
+            return
+        if self.mode == "discard":
+            self.mode = "edit"
+            return
+        if self.mode == "history":
+            self._click_history(event)
+            return
+        if self.mode != "edit":
+            return
+
+        position = self._buffer_position(event.y, event.x)
+        if position is None:
+            return
+        row, column = position
+        self.buffer.set_cursor(row, column)
+        self.error = ""
+        self.notice = ""
+        if event.x < self._gutter_width():
+            self.x_offset = 0
+
+    def _scroll_mouse(self, direction: int) -> None:
+        if direction == 0:
+            return
+        if self.mode == "edit":
+            self.buffer.move_page(direction * SCROLL_LINES)
+            self._after_cursor_move()
+        elif self.mode == "history":
+            self._select_history(self.history_index + direction * SCROLL_LINES)
+
+    def _gutter_width(self) -> int:
+        number_width = max(3, len(str(self.buffer.line_count)))
+        return number_width + 2
+
+    def _buffer_position(self, y: int, x: int) -> Optional[Tuple[int, int]]:
+        """Translate a screen cell in the edit view to a buffer position."""
+        if self.stdscr is None:
+            return None
+        height, width = window_size(self.stdscr)
+        top = 2
+        rows = self._content_rows(height)
+        if y < top or y >= top + rows:
+            return None
+        row = self.scroll_row + (y - top)
+        if row < 0 or row >= self.buffer.line_count:
+            return None
+        gutter = self._gutter_width()
+        available = max(1, width - gutter - 1)
+        display_column = self.x_offset + max(0, min(available - 1, x - gutter))
+        column = index_for_display_column(self.buffer.lines[row], display_column)
+        return row, column
+
+    def _click_history(self, event: MouseEvent) -> None:
+        height, _width = window_size(self.stdscr)
+        rows = max(1, height - 6)
+        box_height = min(height - 1, rows + 4)
+        top = max(1, (height - box_height) // 2)
+        first_row = top + 2
+        offset = event.y - first_row
+        if offset < 0 or offset >= rows:
+            return
+        index = self.history_scroll + offset
+        if index < 0 or index >= len(self.history_entries):
+            return
+        if self.click_tracker.classify(event) == "double":
+            self.history_index = index
+            self._restore_selected()
+        else:
+            self._select_history(index)
+
+    def _select_history(self, index: int) -> None:
+        if not self.history_entries:
+            return
+        self.history_index = max(0, min(len(self.history_entries) - 1, index))
+        self._ensure_history_visible()
 
     def _page_size(self) -> int:
         height, _ = window_size(self.stdscr)
@@ -810,6 +912,8 @@ class FullEditor:
             "  Up / Down      move one line",
             "  Home / End     start or end of line",
             "  PgUp / PgDn    move one page",
+            "  Mouse click    place the cursor at the clicked cell",
+            "  Mouse wheel    scroll three lines",
             "",
             "Editing",
             "  Enter          split the line",

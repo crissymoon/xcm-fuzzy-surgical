@@ -11,9 +11,11 @@ import curses.ascii
 from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.file_writer import FileWriteError, WriteResult, write_text
 from fuzzy_surgical.history import SnapshotStore
+from fuzzy_surgical.mouse import MOUSE_KEY, ClickTracker, MouseEvent, read_mouse
 from fuzzy_surgical.renderer import (
     draw_box,
     draw_code_line,
+    index_for_display_column,
     safe_addstr,
     sanitize,
     shorten,
@@ -55,6 +57,11 @@ class EditorController:
         self.last_save: Optional[WriteResult] = None
         self.last_save_line = 0
         self.saved_history_note = ""
+        self.click_tracker = ClickTracker()
+        self.ctx_start = 0
+        self.visible_ctx_count = 0
+        self.edit_row = 0
+        self.edit_view_start = 0
 
     def edit_line(
         self,
@@ -134,6 +141,11 @@ class EditorController:
                 continue
 
             if self.mode == "edit":
+                if key == MOUSE_KEY:
+                    event = read_mouse(self.stdscr)
+                    if event is not None:
+                        self._handle_mouse(event)
+                    continue
                 if key == curses.ascii.ESC:
                     if self._has_pending_changes():
                         self.mode = "discard"
@@ -256,6 +268,45 @@ class EditorController:
         self.edited_line = self.line_edits.get(number, original)
         self.cursor_pos = len(self.edited_line)
 
+    def _handle_mouse(self, event: MouseEvent) -> None:
+        """Move the caret or switch context lines from a click or wheel tick."""
+        if event.is_scroll:
+            self._move_context(event.direction)
+            return
+
+        if event.y == self.edit_row:
+            display_column = self.edit_view_start + max(0, event.x)
+            self.cursor_pos = index_for_display_column(self.edited_line, display_column)
+            self.save_error = ""
+            return
+
+        offset = event.y - 2
+        if offset < 0 or offset >= self.visible_ctx_count:
+            return
+        index = self.ctx_start + offset
+        if index < 0 or index >= len(self.context_lines):
+            return
+        if index == self.active_ctx_idx:
+            return
+        self.save_error = ""
+        self._save_active_edit()
+        self.active_ctx_idx = index
+        self._load_active_edit()
+
+    def _move_context(self, delta: int) -> None:
+        if delta == 0:
+            return
+        target = max(
+            0,
+            min(len(self.context_lines) - 1, self.active_ctx_idx + delta),
+        )
+        if target == self.active_ctx_idx:
+            return
+        self.save_error = ""
+        self._save_active_edit()
+        self.active_ctx_idx = target
+        self._load_active_edit()
+
     def _draw_editor(self) -> None:
         self.stdscr.erase()
         height, width = window_size(self.stdscr)
@@ -315,6 +366,8 @@ class EditorController:
         ctx_start = max(0, ctx_end - max_ctx_rows)
         visible_ctx = self.context_lines[ctx_start:ctx_end]
         active_number = self.context_lines[self.active_ctx_idx][0]
+        self.ctx_start = ctx_start
+        self.visible_ctx_count = len(visible_ctx)
 
         if ctx_start > 0:
             safe_addstr(self.stdscr, 1, max(0, width - 8), " ^ more", curses.A_DIM)
@@ -369,6 +422,8 @@ class EditorController:
             view_start = max(0, caret_display - available * 2 // 3)
 
         edit_row = edit_y + 1
+        self.edit_row = edit_row
+        self.edit_view_start = view_start
         draw_code_line(
             self.stdscr,
             edit_row,
@@ -516,6 +571,8 @@ class EditorController:
             "Up / Down      switch context line",
             "Left / Right   move the cursor",
             "Home / End     jump to start or end",
+            "Mouse click    place the caret or switch context line",
+            "Mouse wheel    scroll the context by one line",
             "Delete         remove the character under the cursor",
             "Backspace      delete the previous character",
             "Enter          save the edited lines to disk",

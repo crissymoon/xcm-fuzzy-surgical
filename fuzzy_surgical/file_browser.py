@@ -17,6 +17,13 @@ from fuzzy_surgical.browser_navigator import BrowserEntry, FileBrowserNavigator
 from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.full_editor import EditorOpenError, FullEditor
 from fuzzy_surgical.history import SnapshotStore
+from fuzzy_surgical.mouse import (
+    MOUSE_KEY,
+    SCROLL_LINES,
+    ClickTracker,
+    MouseEvent,
+    read_mouse,
+)
 from fuzzy_surgical.renderer import (
     draw_box,
     fill_row,
@@ -62,6 +69,7 @@ class FileBrowser:
         self.notice = ""
         self.help_visible = False
         self.changed_path = ""
+        self.click_tracker = ClickTracker()
         self._refresh()
 
     def run(self) -> Optional[str]:
@@ -75,6 +83,11 @@ class FileBrowser:
                 self.help_visible = False
                 continue
             if key == curses.KEY_RESIZE:
+                continue
+            if key == MOUSE_KEY:
+                event = read_mouse(self.stdscr)
+                if event is not None:
+                    self._handle_mouse(event)
                 continue
             if key == curses.ascii.ESC or key in (CTRL_X, CTRL_Q, curses.KEY_F10):
                 return self.changed_path or None
@@ -176,6 +189,22 @@ class FileBrowser:
         self.selected = max(0, min(len(self.entries) - 1, self.selected + delta))
         self._ensure_visible()
 
+    def _handle_mouse(self, event: MouseEvent) -> None:
+        if event.is_scroll:
+            self._move(event.direction * SCROLL_LINES)
+            return
+        top = 4
+        offset = event.y - top
+        if offset < 0 or offset >= self._visible_rows():
+            return
+        index = self.scroll + offset
+        if index < 0 or index >= len(self.entries):
+            return
+        self.selected = index
+        self._ensure_visible()
+        if self.click_tracker.classify(event) == "double":
+            self._activate()
+
     def _visible_rows(self) -> int:
         height, _ = window_size(self.stdscr)
         return max(1, height - 6)
@@ -245,7 +274,7 @@ class FileBrowser:
         )
 
         top = 4
-        bottom = height - 2
+        bottom = height - 3
         visible = max(1, bottom - top + 1)
         self._ensure_visible()
 
@@ -335,6 +364,8 @@ class FileBrowser:
             "Type           fuzzy filter this folder",
             "Up / Down      move the selection",
             "PgUp / PgDn    move one page",
+            "Mouse click    select a row, double click to open it",
+            "Mouse wheel    scroll three rows",
             "Enter          open a folder or edit a file",
             "Backspace      delete filter text, or go up a folder",
             "Ctrl+U         clear the filter",

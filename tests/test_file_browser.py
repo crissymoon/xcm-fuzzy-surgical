@@ -9,6 +9,7 @@ import curses
 from fuzzy_surgical import file_browser as browser_module
 from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.file_browser import FileBrowser
+from fuzzy_surgical.mouse import ClickTracker, MouseEvent
 
 
 class FakeScreen:
@@ -83,3 +84,43 @@ def test_missing_start_folder_falls_back_safely(tmp_path: Path) -> None:
 
     assert browser.nav.cwd.is_dir()
     browser._draw()
+
+
+def test_mouse_click_selects_a_row_and_wheel_scrolls(tmp_path: Path) -> None:
+    for name in ("a.py", "b.py", "c.py", "d.py", "e.py"):
+        (tmp_path / name).write_text("print('x')\n", encoding="utf-8")
+    browser = FileBrowser(FakeScreen(), Theme(), tmp_path)
+    target = next(
+        index
+        for index, entry in enumerate(browser.entries)
+        if entry.path.name == "c.py"
+    )
+
+    browser._handle_mouse(MouseEvent(10, 4 + target, "click"))
+    assert browser.selected == target
+
+    before = browser.selected
+    browser._handle_mouse(MouseEvent(10, 10, "scroll", 1))
+    assert browser.selected > before
+
+
+def test_double_click_activates_the_row(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("print('x')\n", encoding="utf-8")
+    browser = FileBrowser(FakeScreen(), Theme(), tmp_path)
+    now = [0.0]
+    browser.click_tracker = ClickTracker(clock=lambda: now[0])
+    opened = []
+    browser._activate = lambda: opened.append(browser.selected)
+    target = next(
+        index
+        for index, entry in enumerate(browser.entries)
+        if entry.path.name == "a.py"
+    )
+    event = MouseEvent(10, 4 + target, "click")
+
+    browser._handle_mouse(event)
+    assert opened == []
+
+    now[0] = 0.3
+    browser._handle_mouse(event)
+    assert opened == [target]

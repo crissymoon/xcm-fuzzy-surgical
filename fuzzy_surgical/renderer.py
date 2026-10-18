@@ -25,6 +25,32 @@ def sanitize(text: str) -> str:
     return "".join(out)
 
 
+def display_cell_width(char: str) -> int:
+    """Return how many screen cells one source character occupies."""
+    if char == "\t":
+        return 4
+    if char in ("\n", "\r", "\x00"):
+        return 0
+    return 1
+
+
+def index_for_display_column(text: str, column: int) -> int:
+    """Map a rendered column back to an index in the source line.
+
+    Tabs render as four spaces, so a click in the middle of a tab belongs to
+    that tab character. Columns at or past the end map to the line length.
+    """
+    if column <= 0:
+        return 0
+    cells = 0
+    for index, char in enumerate(text):
+        width = display_cell_width(char)
+        if cells + width > column:
+            return index
+        cells += width
+    return len(text)
+
+
 def safe_addstr(win, y: int, x: int, text: str, attr: int = 0) -> None:
     """Write text, clipping to the window and never raising curses.error."""
     try:

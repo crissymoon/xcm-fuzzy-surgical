@@ -20,6 +20,14 @@ from fuzzy_surgical.fuzzy_matcher import FuzzyMatcher
 from fuzzy_surgical.history import SnapshotStore
 from fuzzy_surgical.indexer import FileIndexer
 from fuzzy_surgical.line_jump import LineJumpResolver
+from fuzzy_surgical.mouse import (
+    MOUSE_KEY,
+    SCROLL_LINES,
+    ClickTracker,
+    disable_mouse,
+    enable_mouse,
+    read_mouse,
+)
 from fuzzy_surgical.query_parser import LineReference, parse_line_reference
 from fuzzy_surgical.renderer import (
     draw_code_line,
@@ -97,6 +105,7 @@ class TUIController:
         self.saved_digest = ""
         self.saved_at = 0.0
         self.termios_state = None
+        self.click_tracker = ClickTracker()
 
     def run(self, start_dir: Optional[Path] = None) -> None:
         """Start curses, choosing a directory first when none was supplied."""
@@ -119,21 +128,25 @@ class TUIController:
             stdscr.keypad(True)
         except curses.error:
             pass
+        enable_mouse(stdscr)
 
-        root = self.root_dir
-        if root is None:
-            picker = DirectoryPicker(
-                stdscr,
-                self.theme,
-                start_dir or safe_start_directory(),
-                self.ignore_dirs,
-            )
-            root = picker.run()
+        try:
+            root = self.root_dir
             if root is None:
-                return
+                picker = DirectoryPicker(
+                    stdscr,
+                    self.theme,
+                    start_dir or safe_start_directory(),
+                    self.ignore_dirs,
+                )
+                root = picker.run()
+                if root is None:
+                    return
 
-        self._load_directory(root)
-        self._search_loop()
+            self._load_directory(root)
+            self._search_loop()
+        finally:
+            disable_mouse()
 
     def _load_directory(self, path: Path) -> None:
         self.root_dir = path
@@ -280,6 +293,9 @@ class TUIController:
 
             if key == curses.KEY_RESIZE:
                 continue
+            if key == MOUSE_KEY:
+                self._handle_mouse()
+                continue
             if key == curses.ascii.ESC:
                 if self.query:
                     self.query = ""
@@ -410,6 +426,26 @@ class TUIController:
         )
         self.x_offset = 0
         self._ensure_visible()
+
+    def _handle_mouse(self) -> None:
+        event = read_mouse(self.stdscr)
+        if event is None:
+            return
+        if event.is_scroll:
+            self._move_selection(event.direction * SCROLL_LINES)
+            return
+
+        top = 3
+        offset = event.y - top
+        if offset < 0 or offset >= self._visible_rows():
+            return
+        index = self.scroll_offset + offset
+        if index < 0 or index >= len(self.results):
+            return
+        self.selected_idx = index
+        self._ensure_visible()
+        if self.click_tracker.classify(event) == "double":
+            self._open_editor()
 
     def _visible_rows(self) -> int:
         stdscr = getattr(self, "stdscr", None)
@@ -605,6 +641,8 @@ class TUIController:
             "Up / Down      move selection",
             "PgUp / PgDn    jump one page",
             "Left / Right   scroll long code lines",
+            "Mouse click    select a row, double click to edit it",
+            "Mouse wheel    scroll three rows",
             "Enter          edit the selected line",
             "F3             browse folders and edit whole files",
             "F4             open the selected file in the full editor",
