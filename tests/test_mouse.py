@@ -191,20 +191,23 @@ def test_right_click_burst_is_suppressed(monkeypatch) -> None:
     assert later is not None and later.is_right_click
 
 
-def test_full_editor_scroll_carries_the_caret_with_the_view() -> None:
+def test_full_editor_scroll_centers_the_caret_on_the_wheel() -> None:
     editor = FullEditor(FakeScreen(24, 80), None)
     editor.path = "/tmp/app.py"
-    editor.buffer = TextBuffer("\n".join(f"line {index:03d} " + "x" * 60 for index in range(100)))
-    editor.buffer.set_cursor(5, 30)
-    editor.scroll_row = 0
-    editor.x_offset = 12
+    editor.buffer = TextBuffer(
+        "\n".join(f"line {index:03d} " + "x" * 60 for index in range(100))
+    )
+    editor.buffer.set_cursor(30, 30)
+    editor.scroll_row = 20
+    editor.scroll_part = 0
 
     editor._scroll_view(mouse.SCROLL_LINES)
 
-    assert editor.buffer.cursor_row == 5 + mouse.SCROLL_LINES
-    assert editor.scroll_row == mouse.SCROLL_LINES
-    assert editor.buffer.cursor_row - editor.scroll_row == 5
-    assert editor.x_offset == 12
+    center = editor._content_rows(24) // 2
+    assert editor.buffer.cursor_row == 30 + mouse.SCROLL_LINES
+    assert editor.buffer.cursor_row - editor.scroll_row == center
+    assert editor.buffer.cursor_col == 30
+    assert editor.scroll_part == 0
 
 
 def test_full_editor_scroll_stops_with_the_caret_at_the_file_edges() -> None:
@@ -213,6 +216,7 @@ def test_full_editor_scroll_stops_with_the_caret_at_the_file_edges() -> None:
     editor.buffer = TextBuffer("\n".join(f"line {index}" for index in range(100)))
     editor.buffer.set_cursor(1, 0)
     editor.scroll_row = 0
+    editor.scroll_part = 0
 
     editor._scroll_view(-mouse.SCROLL_LINES)
     assert editor.buffer.cursor_row == 0
@@ -225,6 +229,77 @@ def test_full_editor_scroll_stops_with_the_caret_at_the_file_edges() -> None:
     editor._scroll_view(mouse.SCROLL_LINES)
     assert editor.buffer.cursor_row == last
     assert editor.scroll_row == max(0, editor.buffer.line_count - rows)
+
+
+def test_end_of_file_fills_the_viewport_without_blank_rows() -> None:
+    editor = FullEditor(FakeScreen(24, 80), None)
+    editor.path = "/tmp/app.py"
+    editor.buffer = TextBuffer("\n".join(f"line {index:03d}" for index in range(300)))
+    editor.buffer.goto_line(300)
+    editor.scroll_row = 0
+    editor.scroll_part = 0
+
+    editor._center_caret(24, 80)
+
+    segments = editor._visible_segments(24, 80)
+    assert len(segments) == editor._content_rows(24)
+    assert segments[-1].row == editor.buffer.line_count - 1
+    assert editor.scroll_row == editor.buffer.line_count - editor._content_rows(24)
+
+
+def test_long_lines_wrap_into_clickable_continuation_rows() -> None:
+    editor = FullEditor(FakeScreen(24, 40), None)
+    editor.path = "/tmp/app.py"
+    editor.buffer = TextBuffer("abcdefghij" * 10 + "\nsecond")
+    editor.scroll_row = 0
+    editor.scroll_part = 0
+    gutter = editor._gutter_width()
+    available = editor._wrap_width(40)
+
+    assert available == 40 - gutter - 1
+    assert editor._buffer_position(2, gutter) == (0, 0)
+    assert editor._buffer_position(3, gutter) == (0, available)
+    assert editor._buffer_position(2, gutter + available - 1) == (0, available - 1)
+
+
+def test_caret_follows_a_wrapped_segment_and_centers_on_open() -> None:
+    editor = FullEditor(FakeScreen(24, 40), None)
+    editor.path = "/tmp/app.py"
+    editor.buffer = TextBuffer("abcdefghij" * 10)
+    editor.buffer.set_cursor(0, 70)
+    editor.scroll_row = 0
+    editor.scroll_part = 0
+    gutter = editor._gutter_width()
+    available = editor._wrap_width(40)
+
+    row, column = editor._caret_screen(24, 40)
+
+    assert row == 2 + 70 // available
+    assert column == gutter + 70 % available
+
+    editor._pending_center = True
+    editor._center_caret(24, 40)
+    assert editor.scroll_part == 0
+    assert row > 2
+
+
+def test_shrinking_the_terminal_rewraps_without_losing_the_caret() -> None:
+    screen = FakeScreen(24, 80)
+    editor = FullEditor(screen, None)
+    editor.path = "/tmp/app.py"
+    editor.buffer = TextBuffer("z" * 70)
+    editor.buffer.set_cursor(0, 65)
+    editor.scroll_row = 0
+    editor.scroll_part = 0
+
+    wide_row, wide_column = editor._caret_screen(24, 80)
+    screen.width = 40
+    narrow_row, narrow_column = editor._caret_screen(24, 40)
+
+    assert wide_row == 2
+    assert narrow_row > wide_row
+    assert narrow_column < wide_column
+    assert editor._buffer_position(narrow_row, narrow_column) == (0, 65)
 
 
 def test_click_echoing_a_scroll_becomes_a_scroll(monkeypatch) -> None:

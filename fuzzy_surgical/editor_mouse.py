@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
-
 import curses
 import curses.ascii
 
 from fuzzy_surgical.context_menu import MenuItem
 from fuzzy_surgical.mouse import MouseEvent
-from fuzzy_surgical.renderer import index_for_display_column, sanitize, window_size
+from fuzzy_surgical.renderer import window_size
 from fuzzy_surgical.selection import copy_to_clipboard
 from fuzzy_surgical.utils import is_enter, printable_char
 
@@ -24,11 +22,8 @@ class EditorMouseMixin:
         if self.stdscr is None:
             return
         height, width = window_size(self.stdscr)
-        gutter = self._gutter_width()
-        row = 2 + (self.buffer.cursor_row - self.scroll_row)
-        line = self.buffer.lines[self.buffer.cursor_row]
-        column = len(sanitize(line[: self.buffer.cursor_col]))
-        x = max(1, min(width - 2, gutter + column - self.x_offset))
+        row, column = self._caret_screen(height, width)
+        x = max(1, min(width - 2, column))
         y = max(1, min(height - 2, row))
         self._open_context_menu(x, y)
 
@@ -151,6 +146,7 @@ class EditorMouseMixin:
             return
 
         if event.is_release:
+            self._dragging = False
             if self.selection.release():
                 text = self.selection.text(self.buffer.lines)
                 if text:
@@ -175,6 +171,7 @@ class EditorMouseMixin:
         if event.is_drag:
             if not self.selection.active:
                 return
+            self._dragging = True
             position = self._drag_position(event.y, event.x)
             if position is not None:
                 self.selection.extend(*position)
@@ -185,6 +182,7 @@ class EditorMouseMixin:
         if not event.is_click:
             return
 
+        self._dragging = False
         position = self._buffer_position(event.y, event.x)
         if position is None:
             return
@@ -194,8 +192,6 @@ class EditorMouseMixin:
             return
         self.error = ""
         self.notice = ""
-        if event.x < self._gutter_width():
-            self.x_offset = 0
         if kind == "triple":
             self.selection.select_line(self.buffer.lines, row)
             self.buffer.set_cursor(row, len(self.buffer.lines[row]))
@@ -213,29 +209,6 @@ class EditorMouseMixin:
         self.selection.start(row, column)
         self.buffer.set_cursor(row, column)
 
-    def _drag_position(self, y: int, x: int):
-        """Map a drag cell to the buffer, scrolling when the pointer leaves."""
-        if self.stdscr is None or self.buffer.line_count == 0:
-            return None
-        height, width = window_size(self.stdscr)
-        top = 2
-        rows = self._content_rows(height)
-        if y < top:
-            self._scroll_view(-1)
-            row = self.scroll_row
-        elif y >= top + rows:
-            self._scroll_view(1)
-            row = self.scroll_row + rows - 1
-        else:
-            row = self.scroll_row + (y - top)
-        row = max(0, min(self.buffer.line_count - 1, row))
-        gutter = self._gutter_width()
-        available = max(1, width - gutter - 1)
-        offset = max(0, min(available - 1, x - gutter))
-        display_column = self.x_offset + offset
-        line = self.buffer.lines[row]
-        return row, index_for_display_column(line, display_column)
-
     def _scroll_mouse(self, direction: int) -> None:
         delta = self.scroll_gate.lines(direction)
         if delta == 0:
@@ -244,24 +217,6 @@ class EditorMouseMixin:
             self._scroll_view(delta)
         elif self.mode == "history":
             self._select_history(self.history_index + delta)
-
-    def _buffer_position(self, y: int, x: int) -> Optional[Tuple[int, int]]:
-        """Translate a screen cell in the edit view to a buffer position."""
-        if self.stdscr is None:
-            return None
-        height, width = window_size(self.stdscr)
-        top = 2
-        rows = self._content_rows(height)
-        if y < top or y >= top + rows:
-            return None
-        row = self.scroll_row + (y - top)
-        if row < 0 or row >= self.buffer.line_count:
-            return None
-        gutter = self._gutter_width()
-        available = max(1, width - gutter - 1)
-        display_column = self.x_offset + max(0, min(available - 1, x - gutter))
-        column = index_for_display_column(self.buffer.lines[row], display_column)
-        return row, column
 
     def _click_history(self, event: MouseEvent) -> None:
         height, _width = window_size(self.stdscr)

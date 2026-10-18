@@ -6,6 +6,7 @@ from pathlib import Path
 
 import curses
 
+from fuzzy_surgical import editor_layout
 from fuzzy_surgical.editor_overlays import (
     draw_discard as draw_discard_overlay,
     draw_help as draw_help_overlay,
@@ -98,72 +99,91 @@ class EditorViewMixin:
             self.theme.attr("ui.dim", dim=True),
         )
 
-    def _content_rows(self, height: int) -> int:
-        return max(1, height - 4)
-
     def _draw_edit(self, height: int, width: int) -> None:
         rows = self._content_rows(height)
         top = 2
-        if self.buffer.cursor_row < self.scroll_row:
-            self.scroll_row = self.buffer.cursor_row
-        elif self.buffer.cursor_row >= self.scroll_row + rows:
-            self.scroll_row = self.buffer.cursor_row - rows + 1
-
         number_width = max(3, len(str(self.buffer.line_count)))
-        gutter_width = number_width + 2
-        available = max(1, width - gutter_width - 1)
+        gutter_width = self._gutter_width()
+        available = self._wrap_width(width)
 
-        line_text = self.buffer.lines[self.buffer.cursor_row]
-        caret_display = len(sanitize(line_text[: self.buffer.cursor_col]))
-        if caret_display < self.x_offset:
-            self.x_offset = caret_display
-        elif caret_display >= self.x_offset + available:
-            self.x_offset = caret_display - available + 1
+        if self._pending_center:
+            self._center_caret(height, width)
+            self._pending_center = False
+        else:
+            self._ensure_caret_visible(height, width)
 
-        end = min(self.buffer.line_count, self.scroll_row + rows)
-        for row_index in range(self.scroll_row, end):
-            screen_row = top + (row_index - self.scroll_row)
-            active = row_index == self.buffer.cursor_row
-            number = self._line_number_text(row_index, number_width)
-            attr = self.theme.attr("edit.active", bold=True) if active else self.theme.attr(
-                "ui.lineno", dim=True
-            )
-            safe_addstr(self.stdscr, screen_row, 0, number, attr)
+        segments = self._visible_segments(height, width)
+        for offset, segment in enumerate(segments):
+            screen_row = top + offset
+            active = segment.row == self.buffer.cursor_row
+            if segment.part == 0:
+                number = self._line_number_text(segment.row, number_width)
+                attr = (
+                    self.theme.attr("edit.active", bold=True)
+                    if active
+                    else self.theme.attr("ui.lineno", dim=True)
+                )
+                safe_addstr(self.stdscr, screen_row, 0, number, attr)
             draw_code_line(
                 self.stdscr,
                 screen_row,
                 gutter_width,
-                self.buffer.lines[row_index],
+                self.buffer.lines[segment.row],
                 self.path,
                 self.theme,
                 base_attr=curses.A_BOLD if active else 0,
                 max_width=available,
-                x_offset=self.x_offset,
+                x_offset=segment.start_cell,
             )
             draw_selection(
                 self.stdscr,
                 screen_row,
                 gutter_width,
-                self.buffer.lines[row_index],
+                self.buffer.lines[segment.row],
                 self.selection.span(
-                    row_index, len(self.buffer.lines[row_index])
+                    segment.row, len(self.buffer.lines[segment.row])
                 ),
-                self.x_offset,
+                segment.start_cell,
                 available,
                 self.theme,
             )
 
-        if self.scroll_row > 0:
+        if (self.scroll_row, self.scroll_part) != (0, 0):
             safe_addstr(self.stdscr, top, max(0, width - 8), " ^ more", curses.A_DIM)
-        if end < self.buffer.line_count:
-            safe_addstr(self.stdscr, top + rows - 1, max(0, width - 8), " v more", curses.A_DIM)
+        more_below = False
+        if segments:
+            last = segments[-1]
+            more_below = (
+                editor_layout.next_segment(
+                    self.buffer.lines, last.row, last.part, available
+                )
+                is not None
+            )
+        if more_below:
+            safe_addstr(
+                self.stdscr,
+                top + rows - 1,
+                max(0, width - 8),
+                " v more",
+                curses.A_DIM,
+            )
 
-        caret_row = top + (self.buffer.cursor_row - self.scroll_row)
-        caret_col = gutter_width + caret_display - self.x_offset
-        if 0 <= caret_col < width - 1 and 0 <= caret_row < height - 2:
+        caret_display = self._caret_cell()
+        caret_part, caret_inner = self._caret_part(available)
+        caret_index = editor_layout.segment_index(
+            segments, self.buffer.cursor_row, caret_part
+        )
+        if caret_index is None:
+            caret_index = 0
+        caret_row = top + caret_index
+        caret_col = min(gutter_width + caret_inner, max(0, width - 2))
+        if 0 <= caret_row < height - 2:
             rendered = sanitize(self.buffer.lines[self.buffer.cursor_row])
-            caret_index = caret_display - self.x_offset
-            caret_char = rendered[caret_index] if 0 <= caret_index < len(rendered) else " "
+            caret_char = (
+                rendered[caret_display]
+                if 0 <= caret_display < len(rendered)
+                else " "
+            )
             safe_addstr(self.stdscr, caret_row, caret_col, caret_char, curses.A_REVERSE)
             try:
                 self.stdscr.move(caret_row, caret_col)

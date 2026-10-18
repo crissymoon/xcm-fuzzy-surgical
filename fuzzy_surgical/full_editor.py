@@ -26,9 +26,10 @@ from fuzzy_surgical.completion_ui import CompletionPopup
 from fuzzy_surgical.context_menu import ContextMenu
 from fuzzy_surgical.devbox import DevBoxSession
 from fuzzy_surgical.diagnostics_ui import DiagnosticPanel
-from fuzzy_surgical.editor_mouse import EditorMouseMixin
 from fuzzy_surgical.editor_chords import run_chord
+from fuzzy_surgical.editor_mouse import EditorMouseMixin
 from fuzzy_surgical.editor_preferences import EditorPreferences
+from fuzzy_surgical.editor_scroll import EditorScrollMixin
 from fuzzy_surgical.editor_view import EditorViewMixin
 from fuzzy_surgical.file_writer import FileWriteError, WriteResult, file_digest, write_text
 from fuzzy_surgical.history import SnapshotStore
@@ -142,7 +143,7 @@ def _devbox_advice(devbox, path: str) -> str:
     return ""
 
 
-class FullEditor(EditorMouseMixin, EditorViewMixin):
+class FullEditor(EditorScrollMixin, EditorMouseMixin, EditorViewMixin):
     """Scrollable editor for one whole file."""
 
     def __init__(
@@ -162,7 +163,9 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         self.buffer = TextBuffer()
         self.disk_digest = ""
         self.scroll_row = 0
-        self.x_offset = 0
+        self.scroll_part = 0
+        self._pending_center = False
+        self._dragging = False
         self.mode = "edit"
         self.error = ""
         self.notice = ""
@@ -206,8 +209,10 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         self.disk_digest = file_digest(self.path)
         if start_line > 0:
             self.buffer.goto_line(start_line)
-        self.scroll_row = max(0, self.buffer.cursor_row - 5)
-        self.x_offset = 0
+        self.scroll_row = 0
+        self.scroll_part = 0
+        self._pending_center = True
+        self._dragging = False
         self.mode = "edit"
         self.error = ""
         self.notice = ""
@@ -409,6 +414,7 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         if item is None:
             return
         self.buffer.goto_line(item.line)
+        self._pending_center = True
         self.diagnostics_panel.close()
         self._after_cursor_move()
         self.notice = f"Line {item.line}: {item.message[:60]}"
@@ -513,9 +519,9 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
             self._after_cursor_move()
             edited = True
         elif key == curses.KEY_UP:
-            self.buffer.move_up()
+            self._move_display(-1)
         elif key == curses.KEY_DOWN:
-            self.buffer.move_down()
+            self._move_display(1)
         elif key == SHIFT_LEFT:
             self._extend_selection("left")
         elif key == SHIFT_RIGHT:
@@ -541,10 +547,10 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
             self.buffer.move_end()
             self.completion.close()
         elif key == curses.KEY_PPAGE:
-            self.buffer.move_page(-self._page_size())
+            self._move_display(-self._page_size())
             self.completion.close()
         elif key == curses.KEY_NPAGE:
-            self.buffer.move_page(self._page_size())
+            self._move_display(self._page_size())
             self.completion.close()
         elif key == curses.KEY_DC:
             self.buffer.delete()
@@ -809,33 +815,6 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         self._after_cursor_move()
         self._after_edit()
 
-    def _scroll_view(self, delta: int) -> None:
-        """Scroll the viewport and carry the caret with it.
-
-        The wheel moves the document under the pointer, so the caret keeps its
-        screen row and the text moves on every emitted row. At the first and
-        last line the caret stops with the view instead of leaving it.
-        """
-        if delta == 0 or self.buffer.line_count == 0:
-            return
-        height, _ = window_size(self.stdscr) if self.stdscr is not None else (24, 80)
-        rows = self._content_rows(height)
-        last_row = max(0, self.buffer.line_count - 1)
-        target = max(0, min(last_row, self.buffer.cursor_row + delta))
-        moved = target - self.buffer.cursor_row
-        if moved == 0:
-            return
-        self.buffer.move_page(moved)
-        max_scroll = max(0, self.buffer.line_count - rows)
-        self.scroll_row = max(0, min(max_scroll, self.scroll_row + moved))
-        # Keep the horizontal position: scrolling vertically must not jump the
-        # view back to column zero.
-        self.x_offset = max(0, self.x_offset)
-
-    def _gutter_width(self) -> int:
-        number_width = max(3, len(str(self.buffer.line_count)))
-        return number_width + 2
-
     def _line_number_text(self, row_index: int, number_width: int) -> str:
         """Return one gutter cell, absolute or hybrid relative to the caret."""
         if self.preferences.hybrid_line_numbers:
@@ -859,16 +838,8 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         self.history_index = max(0, min(len(self.history_entries) - 1, index))
         self._ensure_history_visible()
 
-    def _page_size(self) -> int:
-        height, _ = window_size(self.stdscr)
-        return max(1, height - 5)
-
     def _after_cursor_move(self) -> None:
-        """Keep the horizontal view; the draw pass clamps it to the caret.
-
-        Resetting ``x_offset`` here made a vertical move jump back to column
-        zero, which made wheel scrolling look like it ignored the view.
-        """
+        """The draw pass fits the viewport; nothing to settle here."""
 
     def _save(self) -> None:
         self.error = ""
@@ -948,7 +919,8 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         self.buffer = TextBuffer(text)
         self.disk_digest = file_digest(self.path)
         self.scroll_row = 0
-        self.x_offset = 0
+        self.scroll_part = 0
+        self._pending_center = True
         self.selection.clear()
         self.notice = "Reloaded from disk."
 
@@ -1000,7 +972,8 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         self.buffer.replace_text(text)
         self.saved_line = 1
         self.scroll_row = 0
-        self.x_offset = 0
+        self.scroll_part = 0
+        self._pending_center = True
         self.selection.clear()
         self.notice = (
             "Snapshot loaded into the buffer as unsaved text. Press Ctrl+S to write it."

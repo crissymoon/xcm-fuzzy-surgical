@@ -25,7 +25,8 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Preview rows scroll horizontally to the matched text instead of showing column zero
 - Mouse clicks select result and browser rows, place the caret at the clicked cell in the editor, and double clicks open the selected item
 - Drag with the mouse or trackpad to highlight text in the whole-file editor; the selection is copied shortly after dragging stops even when the terminal never reports a release, a short clipboard watch restores the whole block if the terminal replaces it with a word, and bracketed paste repairs a Cmd+V that still arrives truncated, so Ctrl+V, Cmd+V, Ctrl+C, Ctrl+X and the right-click menu all handle the full highlighted text through pbcopy, wl-copy, xclip, xsel, pbpaste or the Windows clipboard with an OSC 52 fallback
-- Wheel and trackpad scrolling works in the result list, directory picker, file browser and editor, including the older ncurses wheel-down encoding used by macOS; trackpad events are accumulated so the view follows the finger, and the editor carries the caret with the scroll instead of leaving it behind
+- Wheel and trackpad scrolling works in the result list, directory picker, file browser and editor, including the older ncurses wheel-down encoding used by macOS; trackpad events are accumulated so the view follows the finger, and the editor moves the caret through the wrapped rows and keeps it in the middle of the viewport while the wheel turns
+- The editor soft-wraps long lines, so every screen row maps to a real buffer position; Up, Down, Page Up and Page Down move by wrapped row, shrinking the terminal rewraps the text, and the caret stays on the same character instead of being pushed off-screen or losing its place
 - Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file
 - Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path
 - Search results open in one full editor at the matched line, with surrounding context, a cursor and a save that proves the disk copy
@@ -199,7 +200,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Key | Action |
 | --- | --- |
 | Enter / F3 | Open the file from a search result at the matched line, or from the file browser. |
-| Arrows / Home / End | Move the cursor, wrapping between lines. |
+| Arrows / Home / End | Move the cursor through logical and wrapped rows. The view keeps a three-row margin and lines rewrap when the terminal is resized. |
 | Page Up / Page Down | Move one page. |
 | Mouse click | Place the cursor at the clicked cell. |
 | Mouse drag | Highlight text by dragging. The whole selection is copied to the clipboard about a fifth of a second after the drag stops, and immediately on release when the terminal reports one, so the selection stays visible and Cmd+V or Ctrl+V receives all of it. A short clipboard watch puts the full text back if the terminal replaces it with a single word. Ctrl+C re-copies it. |
@@ -209,7 +210,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | F10 | Open the Actions menu beside the caret when the terminal does not pass right clicks through. |
 | Ctrl+X / Ctrl+V | Cut the selection or paste at the caret. macOS terminals keep Cmd+X, Cmd+C and Cmd+V for their own menus and never forward them to a text interface, so Ctrl+X, Ctrl+C and Ctrl+V are the keys the editor receives; the Actions menu offers the same three commands, and a terminal key binding can forward the Command chords if the terminal supports it (in iTerm2, Settings, Keys, add Cmd+X with the Send Hex Code action, value 0x18). A paste replaces a selection, and typing or Backspace over a selection replaces it like a normal editor. The whole-file editor also enables bracketed paste, so the terminal's own Cmd+V arrives as one block, and a block that is only a word or another fragment of the text just copied is replaced with the editor's full verified copy. |
 | Shift+arrows | Extend the selection from the caret, with Home, End, Up and Down variants. |
-| Mouse wheel / trackpad | Scroll four lines per mouse notch. The caret and viewport move together, so the view follows the pointer. |
+| Mouse wheel / trackpad | Scroll four screen rows per mouse notch. The caret moves through the wrapped rows and stays in the middle of the viewport, so scrolling never jumps: at the first and last line it slides toward the edge instead. |
 | Enter | Split the current line. |
 | Backspace / Delete | Delete backwards or forwards, joining lines at the edges. |
 | Tab | Insert four spaces. |
