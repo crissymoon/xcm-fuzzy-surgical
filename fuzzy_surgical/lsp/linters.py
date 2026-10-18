@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from fuzzy_surgical.lsp.commands import resolve
 from fuzzy_surgical.lsp.diagnostics import Diagnostic
 from fuzzy_surgical.lsp.registry import env_without_color
 
@@ -41,11 +42,13 @@ class LinterSpec:
     name: str
     extensions: Tuple[str, ...]
     commands: Tuple[Command, ...]
+    hint: str = ""
 
     def available_command(self) -> Optional[Command]:
         for command in self.commands:
-            if command and shutil.which(command[0]):
-                return command
+            resolved = resolve(command)
+            if resolved:
+                return tuple(resolved)
         return None
 
 
@@ -54,23 +57,41 @@ DEFAULT_LINTERS: Tuple[LinterSpec, ...] = (
         "ruff",
         (".py", ".pyi"),
         (("ruff", "check", "--no-cache", "--output-format=concise", "{file}"),),
+        hint="pip install ruff",
     ),
-    LinterSpec("flake8", (".py", ".pyi"), (("flake8", "{file}"),)),
-    LinterSpec("pyflakes", (".py", ".pyi"), (("pyflakes", "{file}"),)),
+    LinterSpec(
+        "flake8",
+        (".py", ".pyi"),
+        (("{python}", "-m", "flake8", "{file}"), ("flake8", "{file}")),
+        hint="pip install flake8",
+    ),
+    LinterSpec(
+        "pyflakes",
+        (".py", ".pyi"),
+        (("{python}", "-m", "pyflakes", "{file}"), ("pyflakes", "{file}")),
+        hint="pip install pyflakes",
+    ),
     LinterSpec(
         "eslint",
         (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"),
         (("eslint", "--no-color", "--format", "unix", "{file}"),),
+        hint="npm install -g eslint",
     ),
     LinterSpec(
         "shellcheck",
         (".sh", ".bash", ".zsh"),
         (("shellcheck", "--format=gcc", "{file}"),),
+        hint="install shellcheck",
     ),
-    LinterSpec("ruby", (".rb",), (("ruby", "-c", "{file}"),)),
-    LinterSpec("php", (".php",), (("php", "-l", "{file}"),)),
-    LinterSpec("gofmt", (".go",), (("gofmt", "-e", "{file}"),)),
+    LinterSpec("ruby", (".rb",), (("ruby", "-c", "{file}"),), hint="install Ruby"),
+    LinterSpec("php", (".php",), (("php", "-l", "{file}"),), hint="install PHP"),
+    LinterSpec("gofmt", (".go",), (("gofmt", "-e", "{file}"),), hint="install Go"),
 )
+
+
+def available_linters() -> Tuple[LinterSpec, ...]:
+    """Every built-in linter, for diagnostics."""
+    return DEFAULT_LINTERS
 
 
 @dataclass
@@ -273,7 +294,7 @@ def run_linters(
     cwd = os.path.dirname(os.path.abspath(path)) or "."
     for name, template in templates:
         command = _command_for(path, template)
-        if not command or shutil.which(command[0]) is None:
+        if not command or (shutil.which(command[0]) is None and not os.path.isabs(command[0])):
             outcome.errors.append(f"{command[0] if command else 'linter'} not installed")
             continue
         returncode, output, problem = _run(command, cwd, timeout)

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "name": "fuzzy-surgical",
   "display_name": "FuzzySurgical",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "tagline": "A terminal fuzzy finder with syntax highlighted results, surgical line replacement, a file browser and LSP completion.",
   "summary": "FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, writes an edited line to disk on Enter, and then shows the text read back from the file. F3 opens a safe file browser, F4 opens the selected file in a whole-file editor, and every save can store the previous version in a local SQLite database for recovery. The editor speaks the Language Server Protocol for completion and diagnostics, and an optional dev box file adds project linters.",
   "author": {
@@ -61,8 +61,11 @@
     "F4 opens the selected file in a whole-file editor with a cursor, undo and redo, page scrolling and syntax colors",
     "Every line or whole-file save first stores the previous version in a local SQLite database, and F6 lists snapshots to restore",
     "Snapshots stay in the user data directory instead of beside the source tree, and --no-history turns them off",
-    "LSP completion in the full editor through any installed server: pylsp, pyright, typescript-language-server, gopls, rust-analyzer, clangd, bash-language-server, lua-language-server, solargraph or intelephense",
+    "LSP completion in the full editor through any installed server: pylsp, pyright, typescript-language-server, gopls, rust-analyzer, jdtls, clangd, bash-language-server, lua-language-server, solargraph or intelephense",
+    "Python servers and linters installed inside the project virtual environment are found through the running interpreter, not only through PATH",
+    "Java files use Eclipse JDT Language Server, detected from PATH, Homebrew or the redhat.java VS Code extension, with a longer initialize timeout",
     "Ctrl+Space requests completions, typing identifier characters suggests after a short delay, and Enter or Tab inserts a plain text item",
+    "When completion does nothing the status bar names the missing server and the install command, and --lsp-doctor prints every tool it can and cannot run",
     "Linters run in a separate worker after open and save: ruff, flake8, pyflakes, eslint, shellcheck, ruby -c, php -l and gofmt",
     "F9 lists merged language server and linter diagnostics, and Enter jumps to the reported line",
     "Optional .fuzzy-surgical/devbox.json adds servers, linters, timeouts and initialization options per project",
@@ -119,7 +122,16 @@
         "notes": [
           "The package exposes the fuzzy-surgical console script. Use python -m pip install . inside a virtual environment if pipx is unavailable."
         ],
-        "options": []
+        "options": [
+          {
+            "command": "pipx install '.[lsp]'",
+            "description": "Also install python-lsp-server for Python completion and diagnostics."
+          },
+          {
+            "command": "fuzzy-surgical --lsp-doctor",
+            "description": "Show which language servers and linters are ready, with install commands for the rest."
+          }
+        ]
       },
       {
         "id": "source",
@@ -157,6 +169,7 @@
       ["--devbox", "PATH", "Dev box JSON file or project directory. Defaults to .fuzzy-surgical/devbox.json in the search root."],
       ["--no-lsp", "none", "Disable language server completion and diagnostics."],
       ["--no-linters", "none", "Disable background linter runs."],
+      ["--lsp-doctor", "none", "Print every language server and linter with its detection state, then exit. Nothing is installed."],
       ["--version", "none", "Print the installed version and exit."],
       ["--max-files", "INT", "Maximum number of files to index. Default 8000."],
       ["--max-file-size", "INT", "Maximum bytes read per file. Default 1000000."],
@@ -252,7 +265,7 @@
     }
   ],
   "devbox": {
-    "intro": "The full editor can ask a language server for completions and show linter diagnostics. Both are optional and auto-detected from PATH, so a missing tool never blocks editing. Add .fuzzy-surgical/devbox.json to the project root for per-project commands, timeouts or initialization options.",
+    "intro": "The full editor can ask a language server for completions and show linter diagnostics. Both are optional and auto-detected, so a missing tool never blocks editing. Python tools are found through the interpreter that runs the app, which means one installed in the project virtual environment works without being on PATH. Add .fuzzy-surgical/devbox.json to the project root for per-project commands, timeouts or initialization options.",
     "example_path": ".fuzzy-surgical/devbox.json",
     "language": "json",
     "example": [
@@ -279,6 +292,7 @@
     ],
     "servers": [
       ["Python", "pylsp, pyright-langserver, basedpyright-langserver", "ruff, flake8, pyflakes"],
+      ["Java", "jdtls", "none built in"],
       ["TypeScript", "typescript-language-server", "eslint"],
       ["JavaScript", "typescript-language-server", "eslint"],
       ["Go", "gopls", "gofmt -e"],
@@ -291,6 +305,9 @@
     ],
     "notes": [
       "Ctrl+Space requests completions in the full editor. Typing two identifier characters also suggests after a short delay.",
+      "If completion does nothing, run fuzzy-surgical --lsp-doctor. It names each server and linter as ready or missing, prints the install command for each missing tool, and exits without starting anything.",
+      "Python servers and linters are also detected as modules of the running interpreter, so pip install python-lsp-server inside the project venv is enough. Java uses jdtls from PATH, Homebrew, the app cache, or the redhat.java VS Code extension.",
+      "A Java server needs a JDK new enough for its own build. The tested Eclipse JDT Language Server 1.49 works with Java 21 and is detected under the per-user cache directory at lsp/jdtls. Homebrew jdtls installs the JDK it needs.",
       "Up and Down choose a suggestion, Enter or Tab inserts it, and Esc closes the list. Snippet completions are converted to plain text.",
       "Linters run in a separate worker after a file is opened and after a save, with a timeout and capped output.",
       "A custom linter command is an argv array. It is never passed through a shell. {file} is replaced with the target path, or appended when the placeholder is absent.",
@@ -326,6 +343,7 @@
       "Language servers and linters run as child processes in the project root. Every request has a timeout, output is capped, and processes are terminated when the session closes.",
       "LSP messages are bounded by a header limit, a body limit and a message count, and malformed JSON or an early exit is reported instead of raised.",
       "The dev box only reads .fuzzy-surgical/devbox.json or fuzzy-surgical.json from the search root. An invalid entry is skipped with a status message.",
+      "Language server commands never pass through a shell. The {python} token resolves to the interpreter running the app and {cache} to the per-user cache directory, and absolute paths or globs are expanded only when they point at an executable file.",
       "Diagnostics are filtered to the file open in the editor, so a server notice about another file never appears on the current buffer."
     ]
   },

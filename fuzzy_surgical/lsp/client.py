@@ -7,6 +7,7 @@ crash never raises into the curses loop.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import queue
 import subprocess
@@ -14,6 +15,8 @@ import threading
 from collections import deque
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Sequence
+
+from fuzzy_surgical.lsp.commands import cache_root
 
 from fuzzy_surgical.lsp.completion import CompletionItem, normalize_completions
 from fuzzy_surgical.lsp.diagnostics import SEVERITY_BY_LSP, Diagnostic
@@ -29,6 +32,12 @@ from fuzzy_surgical.lsp.registry import env_without_color
 DEFAULT_TIMEOUT = 5.0
 DEFAULT_INITIALIZE_TIMEOUT = 12.0
 MAX_MESSAGE_LOG = 20
+
+
+def workspace_data_dir(root: Path) -> Path:
+    """Stable per-project state directory for servers that need one."""
+    digest = hashlib.sha1(str(Path(root).resolve()).encode("utf-8")).hexdigest()[:12]
+    return Path(cache_root()) / "lsp" / digest
 
 
 class LspClient:
@@ -87,6 +96,18 @@ class LspClient:
             return f"LSP {self.name}"
         return f"{self.name} not running"
 
+    def _argv(self) -> List[str]:
+        """Command line for this server, adding per-project state if needed."""
+        argv = [str(part) for part in self.command]
+        if self.name == "jdtls" and "-data" not in argv:
+            data_dir = workspace_data_dir(self.root)
+            try:
+                data_dir.mkdir(parents=True, exist_ok=True)
+                argv.extend(["-data", str(data_dir)])
+            except OSError:
+                pass
+        return argv
+
     def start(self) -> bool:
         """Spawn the server and complete the initialize handshake."""
         if self.running:
@@ -99,7 +120,7 @@ class LspClient:
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
             self._process = subprocess.Popen(
-                list(self.command),
+                self._argv(),
                 cwd=str(self.root),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -301,6 +322,8 @@ class LspClient:
             else:
                 self.error = str(error)
             return None
+        # A successful answer clears a previous timeout or server error.
+        self.error = ""
         return response.get("result")
 
     def notify(self, method: str, params: Any) -> None:
@@ -338,9 +361,11 @@ class LspClient:
                     message = read_message(process.stdout)
                 except (LspProtocolError, OSError, ValueError) as exc:
                     if not self._closing:
-                        self.error = str(exc)
+                        self.error = self._explain(str(exc))
                     break
                 if message is None:
+                    if not self._closing:
+                        self.error = self._explain("server closed its output")
                     break
                 self._dispatch(message)
         finally:
@@ -365,9 +390,7 @@ class LspClient:
                     pass
             return
         if "id" in message and "method" in message:
-            # Server to client request. Answering null keeps servers that ask
-            # for progress or configuration from waiting forever.
-            self._write({"jsonrpc": "2.0", "id": message.get("id"), "result": None})
+            self._answer_request(message)
             return
         method = message.get("method")
         params = message.get("params") or {}
@@ -376,6 +399,34 @@ class LspClient:
         elif method in ("window/showMessage", "window/logMessage"):
             if isinstance(params, dict) and isinstance(params.get("message"), str):
                 self.last_message = params["message"][:500]
+
+    def _answer_request(self, message: dict) -> None:
+        """Answer a server to client request with a usable result.
+
+        A null answer is enough for registration and progress requests, but
+        configuration and workspace folder requests expect a list of the right
+        shape. Answering those correctly is what lets jdtls and some pylsp
+        versions finish initializing instead of waiting for a reply.
+        """
+        method = message.get("method")
+        result: Any = None
+        if method == "workspace/configuration":
+            params = message.get("params") or {}
+            items = params.get("items") if isinstance(params, dict) else None
+            settings = self.options.get("settings") if isinstance(self.options, dict) else None
+            value = settings if isinstance(settings, dict) else {}
+            count = len(items) if isinstance(items, list) else 1
+            result = [value for _ in range(max(0, min(count, 100)))]
+        elif method == "workspace/workspaceFolders":
+            result = [
+                {
+                    "uri": path_to_uri(str(self.root)),
+                    "name": self.root.name or "workspace",
+                }
+            ]
+        elif method == "workspace/applyEdit":
+            result = {"applied": False}
+        self._write({"jsonrpc": "2.0", "id": message.get("id"), "result": result})
 
     def _store_diagnostics(self, params: dict) -> None:
         uri = params.get("uri")
@@ -418,6 +469,28 @@ class LspClient:
                 self._diagnostics[path] = items
             else:
                 self._diagnostics.pop(path, None)
+
+    def _explain(self, message: str) -> str:
+        """Add the most relevant stderr line to an exit message.
+
+        Servers report the real reason on stderr: a missing JDK, an unresolved
+        module or a bad interpreter. Without this the user only sees that the
+        pipe closed.
+        """
+        lines = [line.strip() for line in self._stderr_tail if line.strip()]
+        interesting = ""
+        for line in reversed(lines):
+            lowered = line.lower()
+            if lowered.startswith(("warning:", "picked up", "slf4j")):
+                continue
+            if any(word in lowered for word in ("error", "requires", "requirement", "exception")):
+                interesting = line
+                break
+        if not interesting and lines:
+            interesting = lines[-1]
+        if not interesting:
+            return f"{self.name}: {message}"
+        return f"{self.name}: {message} ({interesting[:200]})"
 
     def _drain_stderr(self) -> None:
         process = self._process

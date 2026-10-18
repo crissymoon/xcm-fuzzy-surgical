@@ -89,6 +89,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable background linter runs",
     )
     parser.add_argument(
+        "--lsp-doctor",
+        action="store_true",
+        help=(
+            "Report which language servers and linters are installed, then exit. "
+            "Use it when completion or diagnostics do nothing."
+        ),
+    )
+    parser.add_argument(
         "--max-files",
         type=int,
         default=IndexLimits.max_files,
@@ -124,6 +132,12 @@ def _positive(value: int, name: str) -> Optional[int]:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.lsp_doctor:
+        from fuzzy_surgical.lsp.doctor import format_report, inspect_tools
+
+        print(format_report(inspect_tools()))
+        return 0
 
     limits = IndexLimits(
         max_files=_positive(args.max_files, "--max-files") or 1,

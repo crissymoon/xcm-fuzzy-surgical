@@ -1,16 +1,18 @@
 """Known language servers and detection by file extension.
 
-Nothing here starts a process. Detection only checks whether the configured
-executable is on PATH, so a missing server never breaks the editor.
+Nothing here starts a process. Detection only resolves a command template, so a
+missing server never breaks the editor. Commands may use ``{python}`` for the
+interpreter running this program, or contain a ``~`` path or a glob.
 """
 
 from __future__ import annotations
 
 import os
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
+
+from fuzzy_surgical.lsp.commands import resolve
 
 Command = Tuple[str, ...]
 
@@ -23,11 +25,14 @@ class ServerSpec:
     language_id: str
     extensions: Tuple[str, ...]
     commands: Tuple[Command, ...]
+    hint: str = ""
+    initialize_timeout: float = 0.0
 
-    def available_command(self) -> Optional[Command]:
+    def available_command(self) -> Optional[Tuple[str, ...]]:
         for command in self.commands:
-            if command and shutil.which(command[0]):
-                return command
+            resolved = resolve(command)
+            if resolved:
+                return tuple(resolved)
         return None
 
 
@@ -36,47 +41,100 @@ DEFAULT_SERVERS: Tuple[ServerSpec, ...] = (
         "pylsp",
         "python",
         (".py", ".pyi"),
-        (("pylsp",), ("pyright-langserver", "--stdio"), ("basedpyright-langserver", "--stdio")),
+        (
+            ("{python}", "-m", "pylsp"),
+            ("pylsp",),
+            ("{python}", "-m", "pyright.langserver"),
+            ("pyright-langserver", "--stdio"),
+            ("basedpyright-langserver", "--stdio"),
+        ),
+        hint="pip install python-lsp-server",
     ),
     ServerSpec(
         "typescript",
         "typescript",
         (".ts", ".tsx", ".mts", ".cts"),
         (("typescript-language-server", "--stdio"),),
+        hint="npm install -g typescript-language-server typescript",
     ),
     ServerSpec(
         "javascript",
         "javascript",
         (".js", ".jsx", ".mjs", ".cjs"),
         (("typescript-language-server", "--stdio"),),
+        hint="npm install -g typescript-language-server typescript",
     ),
-    ServerSpec("gopls", "go", (".go",), (("gopls", "serve"),)),
-    ServerSpec("rust-analyzer", "rust", (".rs",), (("rust-analyzer",),)),
+    ServerSpec(
+        "gopls",
+        "go",
+        (".go",),
+        (("gopls", "serve"),),
+        hint="go install golang.org/x/tools/gopls@latest",
+    ),
+    ServerSpec(
+        "rust-analyzer",
+        "rust",
+        (".rs",),
+        (("rust-analyzer",),),
+        hint="rustup component add rust-analyzer",
+    ),
+    ServerSpec(
+        "jdtls",
+        "java",
+        (".java",),
+        (
+            ("jdtls",),
+            ("{cache}/lsp/jdtls/bin/jdtls",),
+            ("/opt/homebrew/bin/jdtls",),
+            ("/usr/local/bin/jdtls",),
+            ("~/.local/share/nvim/mason/bin/jdtls",),
+            ("~/.vscode/extensions/redhat.java-*/jdtls/bin/jdtls",),
+            ("~/.vscode-server/extensions/redhat.java-*/jdtls/bin/jdtls",),
+        ),
+        hint="brew install jdtls",
+        initialize_timeout=45.0,
+    ),
     ServerSpec(
         "clangd",
         "cpp",
         (".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"),
         (("clangd",),),
+        hint="install clangd (xcode-select --install or your package manager)",
     ),
-    ServerSpec("clangd", "c", (".c", ".h"), (("clangd",),)),
+    ServerSpec(
+        "clangd",
+        "c",
+        (".c", ".h"),
+        (("clangd",),),
+        hint="install clangd (xcode-select --install or your package manager)",
+    ),
     ServerSpec(
         "bash-language-server",
         "shellscript",
         (".sh", ".bash", ".zsh"),
         (("bash-language-server", "start"),),
+        hint="npm install -g bash-language-server",
     ),
     ServerSpec(
         "lua-language-server",
         "lua",
         (".lua",),
         (("lua-language-server",),),
+        hint="install lua-language-server",
     ),
-    ServerSpec("solargraph", "ruby", (".rb",), (("solargraph", "stdio"),)),
+    ServerSpec(
+        "solargraph",
+        "ruby",
+        (".rb",),
+        (("solargraph", "stdio"),),
+        hint="gem install solargraph",
+    ),
     ServerSpec(
         "intelephense",
         "php",
         (".php",),
         (("intelephense", "--stdio"),),
+        hint="npm install -g intelephense",
     ),
 )
 
@@ -93,6 +151,7 @@ LANGUAGE_BY_EXTENSION: Dict[str, str] = {
     ".cjs": "javascript",
     ".go": "go",
     ".rs": "rust",
+    ".java": "java",
     ".c": "c",
     ".h": "c",
     ".cc": "cpp",
@@ -125,7 +184,14 @@ def _merge_commands(
     for key in keys:
         if key in overrides and overrides[key]:
             commands = tuple(tuple(str(part) for part in command) for command in overrides[key])
-            return ServerSpec(default.name, default.language_id, default.extensions, commands)
+            return ServerSpec(
+                default.name,
+                default.language_id,
+                default.extensions,
+                commands,
+                hint=default.hint,
+                initialize_timeout=default.initialize_timeout,
+            )
     return default
 
 
@@ -161,8 +227,33 @@ def describe_server(spec: Optional[ServerSpec]) -> str:
         return "no LSP for this file"
     command = spec.available_command()
     if command is None:
+        if spec.hint:
+            return f"{spec.name} not installed ({spec.hint})"
         return f"{spec.name} not installed"
     return f"LSP {spec.name}"
+
+
+def missing_server_hint(spec: Optional[ServerSpec]) -> str:
+    """Install advice for a spec that cannot run, or an empty string."""
+    if spec is None:
+        return "No language server is configured for this file type."
+    if spec.available_command() is not None:
+        return ""
+    if spec.hint:
+        return f"{spec.name} is not installed. Install it with: {spec.hint}"
+    return f"{spec.name} is not installed."
+
+
+def available_specs() -> List[ServerSpec]:
+    """Every built-in spec, one per language, for diagnostics."""
+    seen = set()
+    specs: List[ServerSpec] = []
+    for spec in DEFAULT_SERVERS:
+        if spec.language_id in seen:
+            continue
+        seen.add(spec.language_id)
+        specs.append(spec)
+    return specs
 
 
 def env_without_color() -> Dict[str, str]:

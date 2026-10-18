@@ -13,6 +13,7 @@ import json
 import os
 import queue
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -23,6 +24,7 @@ from fuzzy_surgical.lsp.linters import DEFAULT_LINT_TIMEOUT, run_linters
 from fuzzy_surgical.lsp.registry import (
     ServerSpec,
     describe_server,
+    missing_server_hint,
     server_for_path,
 )
 
@@ -31,6 +33,7 @@ CONFIG_NAME = "devbox.json"
 CONFIG_ALTERNATE = "fuzzy-surgical.json"
 MAX_TASKS = 32
 MAX_COMPLETIONS_PER_REQUEST = 200
+SERVER_RETRY_SECONDS = 10.0
 
 Event = Tuple[Any, ...]
 
@@ -191,6 +194,8 @@ class DevBoxSession:
         self._sent_text = ""
         self._client: Optional[LspClient] = None
         self._server: Optional[ServerSpec] = None
+        self._failed_command: Tuple[str, ...] = ()
+        self._failed_at = 0.0
         self._status = "dev box idle"
         self._last_status_emitted = ""
         self._closed = False
@@ -217,6 +222,13 @@ class DevBoxSession:
     @property
     def config_path(self) -> str:
         return self.config.path
+
+    def advice_for(self, path: str) -> str:
+        """Why completion cannot work for a file, or an empty string."""
+        if not self.lsp_enabled:
+            return "language server support is disabled"
+        spec = server_for_path(path, self.config.servers)
+        return missing_server_hint(spec)
 
     def open_document(self, path: str, text: str) -> None:
         """Load a file into the language server and lint it in the background."""
@@ -367,26 +379,34 @@ class DevBoxSession:
             return None
         command = spec.available_command()
         if command is None:
-            self._set_status(f"{spec.name} is not installed")
+            self._set_status(missing_server_hint(spec))
             return None
         current = self._client
         if current is not None and current.running and current.command == command:
             return current
         if current is not None:
             current.stop()
+            self._client = None
+        now = time.monotonic()
+        if command == self._failed_command and now - self._failed_at < SERVER_RETRY_SECONDS:
+            return None
         client = LspClient(
             command,
             self.root,
             spec.language_id,
             name=spec.name,
             timeout=self.config.lsp_timeout,
-            initialize_timeout=self.config.initialize_timeout,
+            initialize_timeout=max(self.config.initialize_timeout, spec.initialize_timeout),
             options=self.config.options,
         )
         self._set_status(f"starting {spec.name}")
         if not client.start():
+            self._failed_command = command
+            self._failed_at = time.monotonic()
             self._set_status(client.status)
             return None
+        self._failed_command = ()
+        self._failed_at = 0.0
         self._client = client
         self._server = spec
         self._sent_text = ""

@@ -78,6 +78,17 @@ __all__ = [
 ]
 
 
+def _devbox_advice(devbox, path: str) -> str:
+    """Ask the dev box why completion is unavailable, tolerating test doubles."""
+    advice = getattr(devbox, "advice_for", None)
+    if callable(advice):
+        try:
+            return str(advice(path))
+        except Exception:
+            return ""
+    return ""
+
+
 class FullEditor:
     """Scrollable editor for one whole file."""
 
@@ -114,6 +125,7 @@ class FullEditor:
         self.diagnostics = []
         self.assist_status = ""
         self._completion_due_at = 0.0
+        self._completion_manual = False
 
     def edit(self, file_path: Path) -> bool:
         """Open the file and return True when at least one save happened."""
@@ -131,8 +143,12 @@ class FullEditor:
         self.diagnostics_panel = DiagnosticPanel()
         self.diagnostics = []
         self._completion_due_at = 0.0
+        self._completion_manual = False
         if self.devbox is not None:
             self.devbox.open_document(self.path, self.buffer.to_text())
+            self.assist_status = _devbox_advice(self.devbox, self.path) or str(
+                getattr(self.devbox, "status", "")
+            )
         try:
             curses.curs_set(1)
         except curses.error:
@@ -204,6 +220,9 @@ class FullEditor:
                     start, prefix = completion_prefix(line, self.buffer.cursor_col)
                     self.completion.prefix_start = start
                     self.completion.refine(prefix)
+                    if not self.completion.visible:
+                        self._report_no_completions()
+                    self._completion_manual = False
                     changed = True
             elif kind == "diagnostics":
                 self.diagnostics = [
@@ -232,6 +251,14 @@ class FullEditor:
 
     def _request_completion(self) -> None:
         if self.devbox is None:
+            self.notice = "Language server support is off (--no-lsp)."
+            self._completion_manual = False
+            return
+        advice = _devbox_advice(self.devbox, self.path)
+        if advice:
+            self.notice = advice
+            self.assist_status = advice
+            self._completion_manual = False
             return
         row = self.buffer.cursor_row
         line = self.buffer.lines[row]
@@ -241,6 +268,16 @@ class FullEditor:
         )
         if sequence:
             self.completion.open(start, prefix, sequence)
+        else:
+            self._report_no_completions()
+
+    def _report_no_completions(self) -> None:
+        advice = _devbox_advice(self.devbox, self.path) if self.devbox is not None else ""
+        if advice:
+            self.notice = advice
+        elif self._completion_manual:
+            self.notice = "No completions returned for this position."
+        self._completion_manual = False
 
     def _after_edit(self) -> None:
         if self.devbox is None:
@@ -305,6 +342,7 @@ class FullEditor:
                 return False
 
         if key in (CTRL_SPACE, CTRL_N):
+            self._completion_manual = True
             self._request_completion()
             return False
         if key in (curses.KEY_F9, CTRL_L):
