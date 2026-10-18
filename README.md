@@ -77,6 +77,7 @@ fuzzy-surgical
 ```
 
 - The installer creates venv, installs windows-curses, writes a launcher under %LOCALAPPDATA%\Programs\fuzzy-surgical and adds that folder to the user PATH.
+- Before reporting success the installer runs the generated launcher once and fails if the shim cannot start the app.
 - Open a new terminal after installing.
 
 ### pipx or pip
@@ -345,6 +346,7 @@ docker\run-tests.ps1 -Isolation hyperv
 - docker/run-tests.sh windows refuses to start on macOS or Linux because Windows containers require the Windows kernel.
 - The Linux harness runs the suite, flake8, the README check, install.sh, a headless end-to-end script and the TUI in a pseudo terminal.
 - The Windows Server Core harness runs install.ps1, the generated .cmd launcher, the Windows drive-letter paths and the suite under windows-curses.
+- The Linux harness checks the PowerShell scripts against Windows PowerShell 5.1 syntax with PSScriptAnalyzer, because Server Core does not include PowerShell 7.
 - run-tests.ps1 picks Hyper-V isolation on Windows 10 and 11 clients automatically, because the ltsc2022 image cannot share the kernel with those builds. Pass -Isolation process or -Isolation hyperv to override it.
 
 - scripts/build_readme.py --check fails when README.md is stale or when the version in meta/project.json does not match fuzzy_surgical/__init__.py.

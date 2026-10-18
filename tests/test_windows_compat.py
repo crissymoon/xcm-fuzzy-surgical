@@ -95,3 +95,30 @@ def test_windows_launcher_uses_the_console_code_page():
     assert "WriteAllBytes" in installer
     assert "exit /b %ERRORLEVEL%" in installer
     assert "cmd.exe cannot execute" in installer
+
+
+def test_installer_runs_the_launcher_before_reporting_success():
+    installer = (ROOT / "install.ps1").read_text(encoding="utf-8")
+
+    assert "& $Launcher --version" in installer
+    assert "Verified launcher" in installer
+    assert "did not run" in installer
+
+
+def test_powershell_check_targets_windows_powershell_51():
+    checker = (ROOT / "docker" / "check-install-ps1.ps1").read_text(encoding="utf-8")
+
+    assert "PSUseCompatibleSyntax" in checker
+    assert '"5.1"' in checker
+    assert "PSAvoidAssignmentToAutomaticVariable" in checker
+    # PowerShell variables are case insensitive, so $error would overwrite the
+    # automatic error collection.
+    assert "foreach ($error" not in checker
+
+
+def test_linux_image_ships_the_powershell_analyzer():
+    dockerfile = (ROOT / "docker" / "Dockerfile.linux").read_text(encoding="utf-8")
+
+    assert "PSScriptAnalyzer" in dockerfile
+    assert "PSSA_VERSION" in dockerfile
+    assert "Install-Module" in dockerfile

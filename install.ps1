@@ -136,6 +136,14 @@ if (-not (Test-Path -LiteralPath $Launcher)) {
     throw "The launcher was not written to $Launcher"
 }
 
+# A shim that exists but cannot start the app is worse than a failed install,
+# so run it once before reporting success.
+$LauncherCheck = (& $Launcher --version 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $LauncherCheck -notlike "$AppName *") {
+    throw "The launcher at $Launcher did not run. Output: $LauncherCheck"
+}
+Write-Host "Verified launcher: $LauncherCheck"
+
 $CurrentParts = @([Environment]::GetEnvironmentVariable("Path", "User") -split ";" | Where-Object { $_ })
 if ($CurrentParts -notcontains $BinDir) {
     [Environment]::SetEnvironmentVariable(

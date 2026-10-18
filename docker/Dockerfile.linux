@@ -11,6 +11,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 ARG TARGETARCH
 ARG PWSH_VERSION=7.4.6
+ARG PSSA_VERSION=1.25.0
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -45,6 +46,14 @@ RUN set -eu; \
     pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
 
 RUN useradd --create-home --home-dir /home/tester --shell /bin/bash tester
+
+# PSScriptAnalyzer verifies that the Windows scripts stay valid Windows
+# PowerShell 5.1, which is what Server Core actually runs. Parsing with pwsh 7
+# alone would accept syntax such as ?? and ?: that 5.1 rejects.
+RUN pwsh -NoLogo -NoProfile -Command "\
+    Set-PSRepository PSGallery -InstallationPolicy Trusted; \
+    Install-Module PSScriptAnalyzer -RequiredVersion ${PSSA_VERSION} -Scope AllUsers -Force -ErrorAction Stop"
+
 
 WORKDIR /src
 COPY . /src

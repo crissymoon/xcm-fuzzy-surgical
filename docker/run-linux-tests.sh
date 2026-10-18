@@ -32,7 +32,7 @@ step "Lint and generated documentation"
 "$TEST_VENV/bin/python" scripts/build_readme.py --check
 bash -n install.sh
 
-step "PowerShell scripts parse"
+step "PowerShell scripts parse and target Windows PowerShell 5.1"
 pwsh -NoLogo -NoProfile -File docker/check-install-ps1.ps1
 
 step "POSIX installer"

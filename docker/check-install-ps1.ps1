@@ -19,21 +19,59 @@ function Test-PowerShellFile {
         [ref]$errors
     )
     if ($errors.Count -gt 0) {
-        foreach ($error in $errors) {
-            Write-Host ("parse error in ${resolved}: " + $error.Message)
+        foreach ($problem in $errors) {
+            Write-Host ("parse error in ${resolved}: " + $problem.Message)
         }
         throw "$resolved does not parse"
     }
     Write-Host "ok  parsed $resolved"
 }
 
+# Windows Server Core ships Windows PowerShell 5.1. PowerShell 7 accepts syntax
+# such as ?? and ?: that 5.1 rejects, so parsing under pwsh is not enough.
+# PSScriptAnalyzer's compatibility rule closes that gap on any host.
+function Test-WindowsPowerShellSyntax {
+    param([string]$File)
+
+    if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
+        Write-Host "skip PSScriptAnalyzer is not installed; only parsing was checked"
+        return
+    }
+    Import-Module PSScriptAnalyzer -ErrorAction Stop
+    $settings = @{
+        Rules = @{
+            PSUseCompatibleSyntax = @{
+                Enable = $true
+                TargetVersions = @("5.1")
+            }
+        }
+    }
+    $findings = @(
+        Invoke-ScriptAnalyzer -Path $File -Settings $settings -IncludeRule @(
+            "PSUseCompatibleSyntax",
+            "PSAvoidAssignmentToAutomaticVariable"
+        )
+    )
+    foreach ($finding in $findings) {
+        Write-Host (
+            "{0}:{1} {2} {3}" -f $File, $finding.Line, $finding.RuleName, $finding.Message
+        )
+    }
+    if ($findings.Count -gt 0) {
+        throw "$File is not compatible with Windows PowerShell 5.1"
+    }
+    Write-Host "ok  Windows PowerShell 5.1 compatible $File"
+}
+
 $scripts = @(
     (Join-Path $Root "install.ps1"),
+    (Join-Path $PSScriptRoot "check-install-ps1.ps1"),
     (Join-Path $PSScriptRoot "windows-smoke.ps1"),
     (Join-Path $PSScriptRoot "run-tests.ps1")
 )
 foreach ($script in $scripts) {
     Test-PowerShellFile -File $script
+    Test-WindowsPowerShellSyntax -File $script
 }
 
 $installer = Get-Content -Raw -LiteralPath (Join-Path $Root "install.ps1")
@@ -47,7 +85,8 @@ $required = @(
     "3, 9",
     "OEMCodePage",
     "WriteAllBytes",
-    "exit /b %ERRORLEVEL%"
+    "exit /b %ERRORLEVEL%",
+    "did not run"
 )
 foreach ($needle in $required) {
     if (-not $installer.Contains($needle)) {
