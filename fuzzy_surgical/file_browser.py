@@ -24,6 +24,7 @@ from fuzzy_surgical.mouse import (
     ClickTracker,
     MouseEvent,
     read_mouse,
+    reset_input_state,
 )
 from fuzzy_surgical.renderer import (
     draw_box,
@@ -78,6 +79,7 @@ class FileBrowser:
 
     def run(self) -> Optional[str]:
         """Return the last saved path, or None when nothing was written."""
+        reset_input_state()
         while True:
             self._draw()
             key = read_key(self.stdscr)
@@ -373,7 +375,7 @@ class FileBrowser:
             "Up / Down      move the selection",
             "PgUp / PgDn    move one page",
             "Mouse click    select a row, double click to open it",
-            "Mouse wheel    scroll three rows",
+            "Mouse wheel    scroll four rows",
             "Enter          open a folder or edit a file",
             "Backspace      delete filter text, or go up a folder",
             "Ctrl+U         clear the filter",

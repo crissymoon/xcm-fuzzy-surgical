@@ -11,7 +11,14 @@ import curses.ascii
 from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.file_writer import FileWriteError, WriteResult, write_text
 from fuzzy_surgical.history import SnapshotStore
-from fuzzy_surgical.mouse import MOUSE_KEY, ClickTracker, MouseEvent, ScrollGate, read_mouse
+from fuzzy_surgical.mouse import (
+    MOUSE_KEY,
+    ClickTracker,
+    MouseEvent,
+    ScrollGate,
+    read_mouse,
+    reset_input_state,
+)
 from fuzzy_surgical.renderer import (
     draw_box,
     draw_code_line,
@@ -102,6 +109,7 @@ class EditorController:
         context_lines: List[Tuple[int, str]],
         match_column: Optional[int] = None,
     ) -> bool:
+        reset_input_state()
         self.stdscr = stdscr
         self.file_path = file_path
         self.line_num = line_num

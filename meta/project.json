@@ -2,7 +2,7 @@
   "schema_version": 1,
   "name": "fuzzy-surgical",
   "display_name": "FuzzySurgical",
-  "version": "0.4.5",
+  "version": "0.4.6",
   "tagline": "A terminal fuzzy finder with syntax highlighted results, surgical line replacement, a file browser and LSP completion.",
   "summary": "FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, writes an edited line to disk on Enter, and then shows the text read back from the file. F3 opens a safe file browser, F4 opens the selected file in a whole-file editor, and every save can store the previous version in a local SQLite database for recovery. The editor speaks the Language Server Protocol for completion and diagnostics, and an optional dev box file adds project linters.",
   "author": {
@@ -47,7 +47,7 @@
     "Syntax highlighted results and editor context with a fallback highlighter when Pygments is unavailable",
     "Preview rows scroll horizontally to the matched text instead of showing column zero",
     "Mouse clicks select result and browser rows, place the caret at the clicked cell in both editors, and double clicks open the selected item",
-    "Wheel and trackpad scrolling works in the result list, directory picker, file browser and both editors, including the older ncurses wheel-down encoding used by macOS; trackpad momentum is throttled so the view glides instead of jumping to the end",
+    "Wheel and trackpad scrolling works in the result list, directory picker, file browser and both editors, including the older ncurses wheel-down encoding used by macOS; trackpad events are accumulated so the view follows the finger, and the whole-file editor carries the caret with the scroll instead of leaving it behind",
     "Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file",
     "Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path",
     "Surgical line editing with surrounding context and a save that proves the disk copy",
@@ -284,7 +284,7 @@
         ],
         [
           "Mouse wheel / trackpad",
-          "Scroll three rows per mouse notch, with trackpad momentum throttled."
+          "Scroll four rows per mouse notch. Trackpad events accumulate into smooth movement."
         ],
         [
           "Left / Right",
@@ -345,7 +345,7 @@
         ],
         [
           "Mouse wheel / trackpad",
-          "Scroll three rows per mouse notch, with trackpad momentum throttled."
+          "Scroll four rows per mouse notch. Trackpad events accumulate into smooth movement."
         ],
         [
           "Enter",
@@ -382,7 +382,7 @@
         ],
         [
           "Mouse wheel / trackpad",
-          "Scroll three rows per mouse notch, with trackpad momentum throttled."
+          "Scroll four rows per mouse notch. Trackpad events accumulate into smooth movement."
         ],
         [
           "Enter",
@@ -423,7 +423,7 @@
         ],
         [
           "Mouse wheel / trackpad",
-          "Scroll three lines per mouse notch. Rapid trackpad events are throttled to one row at a time."
+          "Scroll four lines per mouse notch. The caret and viewport move together, so the scroll follows the caret and the text keeps its place under the pointer."
         ],
         [
           "Enter",
@@ -488,7 +488,7 @@
         ],
         [
           "Mouse wheel / trackpad",
-          "Move the active context line by one. Rapid trackpad events are throttled."
+          "Move the active context line by one. Trackpad events accumulate so the list follows the finger."
         ],
         [
           "Left / Right",

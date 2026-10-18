@@ -156,7 +156,7 @@ def test_search_view_click_selects_a_result(monkeypatch) -> None:
         tui_module, "read_mouse", lambda _screen: MouseEvent(0, 5, "scroll", 1)
     )
     controller._handle_mouse()
-    assert controller.selected_idx == 5
+    assert controller.selected_idx == 6
 
 
 def test_search_view_double_click_opens_the_editor(monkeypatch) -> None:
@@ -188,17 +188,104 @@ def test_horizontal_wheel_ticks_are_not_clicks() -> None:
             assert mouse.event_from_state(1, 1, state) is None
 
 
-def test_scroll_gate_limits_a_trackpad_burst() -> None:
+def test_full_editor_scroll_carries_the_caret_with_the_view() -> None:
+    editor = FullEditor(FakeScreen(24, 80), None)
+    editor.path = "/tmp/app.py"
+    editor.buffer = TextBuffer("\n".join(f"line {index:03d} " + "x" * 60 for index in range(100)))
+    editor.buffer.set_cursor(5, 30)
+    editor.scroll_row = 0
+    editor.x_offset = 12
+
+    editor._scroll_view(mouse.SCROLL_LINES)
+
+    assert editor.buffer.cursor_row == 5 + mouse.SCROLL_LINES
+    assert editor.scroll_row == mouse.SCROLL_LINES
+    assert editor.buffer.cursor_row - editor.scroll_row == 5
+    assert editor.x_offset == 12
+
+
+def test_full_editor_scroll_stops_with_the_caret_at_the_file_edges() -> None:
+    editor = FullEditor(FakeScreen(24, 80), None)
+    editor.path = "/tmp/app.py"
+    editor.buffer = TextBuffer("\n".join(f"line {index}" for index in range(100)))
+    editor.buffer.set_cursor(1, 0)
+    editor.scroll_row = 0
+
+    editor._scroll_view(-mouse.SCROLL_LINES)
+    assert editor.buffer.cursor_row == 0
+    assert editor.scroll_row == 0
+
+    rows = editor._content_rows(24)
+    last = editor.buffer.line_count - 1
+    editor.buffer.set_cursor(last, 0)
+    editor.scroll_row = max(0, editor.buffer.line_count - rows)
+    editor._scroll_view(mouse.SCROLL_LINES)
+    assert editor.buffer.cursor_row == last
+    assert editor.scroll_row == max(0, editor.buffer.line_count - rows)
+
+
+def test_click_echoing_a_scroll_becomes_a_scroll(monkeypatch) -> None:
+    monkeypatch.setattr(mouse, "_PRIMARY_CLICK_BITS", 0x01)
+    monkeypatch.setattr(mouse, "_SCROLL_UP_BITS", 0x02)
+    monkeypatch.setattr(mouse, "_SCROLL_DOWN_BITS", 0x04)
+    monkeypatch.setattr(mouse, "_REPORT_BIT", 0x08)
+    monkeypatch.setattr(mouse, "_LEGACY_SCROLL_DOWN", False)
+    mouse.reset_input_state()
+
+    assert mouse.normalise_event(4, 5, 0x04, now=10.0) == MouseEvent(4, 5, "scroll", 1)
+    assert mouse.normalise_event(4, 5, 0x01, now=10.2) == MouseEvent(4, 5, "scroll", 1)
+    assert mouse.normalise_event(4, 5, 0x01, now=10.6) == MouseEvent(4, 5, "click")
+    assert mouse.normalise_event(20, 5, 0x01, now=10.2) == MouseEvent(20, 5, "click")
+
+
+def test_scroll_gate_moves_a_mouse_notch_at_once() -> None:
     now = [0.0]
     gate = mouse.ScrollGate(clock=lambda: now[0])
 
     assert gate.lines(1) == mouse.SCROLL_LINES
-    for step in range(1, 9):
-        now[0] = step * 0.008
-        assert gate.lines(1) == 0
-    now[0] = 0.072
-    assert gate.lines(1) == mouse.SCROLL_BURST_LINES
     assert gate.lines(0) == 0
+
+
+def test_scroll_gate_accumulates_trackpad_events() -> None:
+    now = [0.0]
+    gate = mouse.ScrollGate(clock=lambda: now[0])
+    total = gate.lines(1)
+
+    for _ in range(9):
+        now[0] += 0.012
+        total += gate.lines(1)
+
+    # The old gate returned one row every 70 ms, which felt disconnected from
+    # the finger. Nine rapid events now produce three rows.
+    assert total == mouse.SCROLL_LINES + 3
+
+
+def test_scroll_gate_caps_trackpad_momentum() -> None:
+    now = [0.0]
+    gate = mouse.ScrollGate(clock=lambda: now[0])
+
+    gate.lines(1)
+    total = 0
+    for _ in range(100):
+        now[0] += 0.001
+        total += gate.lines(1)
+
+    ceiling = now[0] * mouse.SCROLL_MAX_RATE
+    assert 0 < total <= ceiling + 1
+
+
+def test_scroll_gate_applies_a_reversal_at_once() -> None:
+    now = [0.0]
+    gate = mouse.ScrollGate(clock=lambda: now[0])
+    gate.lines(1)
+
+    now[0] = 0.010
+    gate.lines(1)
+    now[0] = 0.020
+    assert gate.lines(-1) == -mouse.SCROLL_LINES
+
+    gate.reset()
+    assert gate.lines(1) == mouse.SCROLL_LINES
 
 
 def test_scroll_gate_uses_one_row_per_notch_when_asked() -> None:

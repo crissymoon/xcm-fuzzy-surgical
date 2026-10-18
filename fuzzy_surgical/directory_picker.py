@@ -16,6 +16,7 @@ from fuzzy_surgical.mouse import (
     ClickTracker,
     MouseEvent,
     read_mouse,
+    reset_input_state,
 )
 from fuzzy_surgical.renderer import fill_row, safe_addstr, shorten, window_size
 from fuzzy_surgical.utils import (
@@ -49,6 +50,7 @@ class DirectoryPicker:
         self._refresh()
 
     def run(self) -> Optional[Path]:
+        reset_input_state()
         while True:
             self._draw()
             key = read_key(self.stdscr)

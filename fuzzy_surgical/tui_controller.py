@@ -28,6 +28,7 @@ from fuzzy_surgical.mouse import (
     disable_mouse,
     enable_mouse,
     read_mouse,
+    reset_input_state,
 )
 from fuzzy_surgical.query_parser import LineReference, parse_line_reference
 from fuzzy_surgical.renderer import (
@@ -313,6 +314,7 @@ class TUIController:
         self.stdscr.refresh()
 
     def _search_loop(self) -> None:
+        reset_input_state()
         while True:
             self._draw_ui()
             key = self._read_search_key()
@@ -680,7 +682,7 @@ class TUIController:
             "PgUp / PgDn    jump one page",
             "Left / Right   scroll long code lines",
             "Mouse click    select a row, double click to edit it",
-            "Mouse wheel    scroll three rows",
+            "Mouse wheel    scroll four rows",
             "Enter          edit the selected line",
             "F3             browse folders and edit whole files",
             "F4             open the selected file in the full editor",

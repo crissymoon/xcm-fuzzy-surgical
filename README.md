@@ -24,7 +24,7 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Syntax highlighted results and editor context with a fallback highlighter when Pygments is unavailable
 - Preview rows scroll horizontally to the matched text instead of showing column zero
 - Mouse clicks select result and browser rows, place the caret at the clicked cell in both editors, and double clicks open the selected item
-- Wheel and trackpad scrolling works in the result list, directory picker, file browser and both editors, including the older ncurses wheel-down encoding used by macOS; trackpad momentum is throttled so the view glides instead of jumping to the end
+- Wheel and trackpad scrolling works in the result list, directory picker, file browser and both editors, including the older ncurses wheel-down encoding used by macOS; trackpad events are accumulated so the view follows the finger, and the whole-file editor carries the caret with the scroll instead of leaving it behind
 - Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file
 - Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path
 - Surgical line editing with surrounding context and a save that proves the disk copy
@@ -153,7 +153,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Up / Down | Move the selection one row. |
 | Page Up / Page Down | Move the selection one page. |
 | Mouse click | Select a row. Double click opens the line editor. |
-| Mouse wheel / trackpad | Scroll three rows per mouse notch, with trackpad momentum throttled. |
+| Mouse wheel / trackpad | Scroll four rows per mouse notch. Trackpad events accumulate into smooth movement. |
 | Left / Right | Scroll long code lines horizontally. |
 | Enter | Edit the selected line after reloading it from disk. |
 | F3 | Browse folders and edit whole files. |
@@ -172,7 +172,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Type | Fuzzy filter directories. |
 | Up / Down | Move the selection. |
 | Mouse click | Select a folder. Double click opens it. |
-| Mouse wheel / trackpad | Scroll three rows per mouse notch, with trackpad momentum throttled. |
+| Mouse wheel / trackpad | Scroll four rows per mouse notch. Trackpad events accumulate into smooth movement. |
 | Enter | Open the selected folder or start searching the current folder. |
 | Backspace | Delete filter text, or move to the parent directory when the filter is empty. |
 | Esc | Cancel and return to the previous view. |
@@ -185,7 +185,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Type | Fuzzy filter the current folder. |
 | Up / Down | Move the selection. |
 | Mouse click | Select a row. Double click opens a folder or edits the file. |
-| Mouse wheel / trackpad | Scroll three rows per mouse notch, with trackpad momentum throttled. |
+| Mouse wheel / trackpad | Scroll four rows per mouse notch. Trackpad events accumulate into smooth movement. |
 | Enter | Open a folder or edit the selected file in the full editor. |
 | Backspace | Delete filter text, or move to the parent folder when the filter is empty. |
 | Ctrl+U | Clear the filter. |
@@ -199,7 +199,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Arrows / Home / End | Move the cursor, wrapping between lines. |
 | Page Up / Page Down | Move one page. |
 | Mouse click | Place the cursor at the clicked cell. |
-| Mouse wheel / trackpad | Scroll three lines per mouse notch. Rapid trackpad events are throttled to one row at a time. |
+| Mouse wheel / trackpad | Scroll four lines per mouse notch. The caret and viewport move together, so the scroll follows the caret and the text keeps its place under the pointer. |
 | Enter | Split the current line. |
 | Backspace / Delete | Delete backwards or forwards, joining lines at the edges. |
 | Tab | Insert four spaces. |
@@ -219,7 +219,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | --- | --- |
 | Up / Down | Switch the active context line. |
 | Mouse click | Place the caret in the edit line, or switch the context line. |
-| Mouse wheel / trackpad | Move the active context line by one. Rapid trackpad events are throttled. |
+| Mouse wheel / trackpad | Move the active context line by one. Trackpad events accumulate so the list follows the finger. |
 | Left / Right | Move the cursor. |
 | Home / End | Jump to the start or end of the line. |
 | Backspace / Delete | Edit the line. |

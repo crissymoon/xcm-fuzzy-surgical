@@ -17,13 +17,16 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-SCROLL_LINES = 3
-SCROLL_BURST_LINES = 1
-SCROLL_BURST_GAP = 0.05
-SCROLL_BURST_INTERVAL = 0.07
+SCROLL_LINES = 4
+SCROLL_TRACKPAD_STEP = 0.35
+SCROLL_MAX_RATE = 50.0
+SCROLL_BURST_GAP = 0.045
 DOUBLE_CLICK_SECONDS = 0.45
 DEDUPE_SECONDS = 0.20
+CLICK_ECHO_SECONDS = 0.35
+CLICK_ECHO_DISTANCE = 2
 MOUSE_KEY = getattr(curses, "KEY_MOUSE", -1)
+_LAST_SCROLL = [float("-inf"), 0, 0, 0]
 
 
 def _bits(*names: str) -> int:
@@ -151,6 +154,47 @@ def event_from_state(x: int, y: int, state: int) -> Optional[MouseEvent]:
     return None
 
 
+def reset_input_state() -> None:
+    """Forget the last scroll, so a new view starts with a clean guard."""
+    global _LAST_SCROLL
+    _LAST_SCROLL = [float("-inf"), 0, 0, 0]
+
+
+def normalise_event(
+    x: int, y: int, state: int, now: Optional[float] = None
+) -> Optional[MouseEvent]:
+    """Map one raw curses state to a click or scroll.
+
+    Old ncurses builds cannot represent wheel down. Repeated wheel ticks at
+    one cell are then decoded as ``REPORT_MOUSE_POSITION`` and, after a few
+    ticks, as a synthetic button one press at the same cell. Without a guard
+    that synthetic press moves the caret to the pointer, which looks like the
+    scroll ignoring the caret. A click at the cell that was just scrolled,
+    inside ``CLICK_ECHO_SECONDS``, is treated as another tick in the same
+    direction.
+    """
+    event = event_from_state(x, y, state)
+    if event is None:
+        return None
+
+    when = time.monotonic() if now is None else now
+    if event.is_scroll:
+        _LAST_SCROLL[:] = [when, event.x, event.y, event.direction]
+        return event
+
+    previous = _LAST_SCROLL
+    if (
+        event.is_click
+        and previous[3] != 0
+        and when - previous[0] <= CLICK_ECHO_SECONDS
+        and abs(event.x - previous[1]) <= CLICK_ECHO_DISTANCE
+        and abs(event.y - previous[2]) <= CLICK_ECHO_DISTANCE
+    ):
+        previous[0] = when
+        return MouseEvent(event.x, event.y, "scroll", previous[3])
+    return event
+
+
 def read_mouse(stdscr=None) -> Optional[MouseEvent]:
     """Pop one pending mouse event, or None when nothing usable is queued."""
     if not mouse_available():
@@ -159,25 +203,35 @@ def read_mouse(stdscr=None) -> Optional[MouseEvent]:
         _ident, x, y, _z, state = curses.getmouse()
     except (curses.error, AttributeError):
         return None
-    return event_from_state(x, y, state)
+    return normalise_event(x, y, state)
 
 
 class ScrollGate:
     """Convert wheel events into a measured number of rows.
 
-    A mouse wheel sends one event per notch, so each notch moves
-    ``SCROLL_LINES`` rows. A trackpad emits a dense burst and its momentum can
-    send dozens of events per second. Those are limited to one row per
-    interval, which keeps the view gliding instead of racing to the end.
+    A mouse wheel sends one event per notch, so a notch moves ``SCROLL_LINES``
+    rows and is applied at once. A trackpad emits a dense stream instead. Each
+    event in that stream contributes a fraction of a row and the fractions are
+    carried between events, so the view moves on every few events instead of
+    dropping them. Movement is capped by ``SCROLL_MAX_RATE`` so momentum cannot
+    race to the end of the file, and a direction change is applied at once so
+    reversing the fingers feels immediate.
     """
 
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
         self._last = float("-inf")
-        self._next_rapid = float("-inf")
+        self._direction = 0
+        self._carry = 0.0
+
+    def reset(self) -> None:
+        """Forget timing and carry, for example when the view changes."""
+        self._last = float("-inf")
+        self._direction = 0
+        self._carry = 0.0
 
     def lines(self, direction: int, per_notch: int = SCROLL_LINES) -> int:
-        """Return signed rows to move for one wheel event, or 0 to ignore it."""
+        """Return signed rows to move for one wheel event, or 0 to wait."""
         if direction == 0:
             return 0
         now = self._clock()
@@ -185,13 +239,16 @@ class ScrollGate:
         self._last = now
         sign = 1 if direction > 0 else -1
         step = max(1, per_notch)
-        if gap >= SCROLL_BURST_GAP:
-            self._next_rapid = now + SCROLL_BURST_INTERVAL
+        if gap < 0 or sign != self._direction or gap >= SCROLL_BURST_GAP:
+            self._direction = sign
+            self._carry = 0.0
             return sign * step
-        if now < self._next_rapid:
+        self._carry += min(SCROLL_TRACKPAD_STEP, gap * SCROLL_MAX_RATE)
+        whole = int(self._carry)
+        if whole <= 0:
             return 0
-        self._next_rapid = now + SCROLL_BURST_INTERVAL
-        return sign * SCROLL_BURST_LINES
+        self._carry -= whole
+        return sign * whole
 
 
 class ClickTracker:

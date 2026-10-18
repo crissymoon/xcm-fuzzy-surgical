@@ -33,6 +33,7 @@ from fuzzy_surgical.mouse import (
     ClickTracker,
     MouseEvent,
     read_mouse,
+    reset_input_state,
 )
 from fuzzy_surgical.renderer import (
     draw_box,
@@ -131,6 +132,7 @@ class FullEditor:
 
     def edit(self, file_path: Path) -> bool:
         """Open the file and return True when at least one save happened."""
+        reset_input_state()
         self.path = os.path.abspath(str(file_path))
         self.buffer = TextBuffer(read_editor_file(self.path))
         self.disk_digest = file_digest(self.path)
@@ -464,10 +466,32 @@ class FullEditor:
         if delta == 0:
             return
         if self.mode == "edit":
-            self.buffer.move_page(delta)
-            self._after_cursor_move()
+            self._scroll_view(delta)
         elif self.mode == "history":
             self._select_history(self.history_index + delta)
+
+    def _scroll_view(self, delta: int) -> None:
+        """Scroll the viewport and carry the caret with it.
+
+        The wheel moves the document under the pointer, so the caret keeps its
+        screen row and the text moves on every emitted row. At the first and
+        last line the caret stops with the view instead of leaving it.
+        """
+        if delta == 0 or self.buffer.line_count == 0:
+            return
+        height, _ = window_size(self.stdscr) if self.stdscr is not None else (24, 80)
+        rows = self._content_rows(height)
+        last_row = max(0, self.buffer.line_count - 1)
+        target = max(0, min(last_row, self.buffer.cursor_row + delta))
+        moved = target - self.buffer.cursor_row
+        if moved == 0:
+            return
+        self.buffer.move_page(moved)
+        max_scroll = max(0, self.buffer.line_count - rows)
+        self.scroll_row = max(0, min(max_scroll, self.scroll_row + moved))
+        # Keep the horizontal position: scrolling vertically must not jump the
+        # view back to column zero.
+        self.x_offset = max(0, self.x_offset)
 
     def _gutter_width(self) -> int:
         number_width = max(3, len(str(self.buffer.line_count)))
@@ -520,7 +544,11 @@ class FullEditor:
         return max(1, height - 5)
 
     def _after_cursor_move(self) -> None:
-        self.x_offset = 0
+        """Keep the horizontal view; the draw pass clamps it to the caret.
+
+        Resetting ``x_offset`` here made a vertical move jump back to column
+        zero, which made wheel scrolling look like it ignored the view.
+        """
 
     def _save(self) -> None:
         self.error = ""
@@ -934,7 +962,7 @@ class FullEditor:
             "  Home / End     start or end of line",
             "  PgUp / PgDn    move one page",
             "  Mouse click    place the cursor at the clicked cell",
-            "  Mouse wheel    scroll a few lines, trackpads glide",
+            "  Mouse wheel    scroll the file with the caret, trackpads follow",
             "",
             "Editing",
             "  Enter          split the line",
