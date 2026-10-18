@@ -1,8 +1,10 @@
 """Full file editor shown inside the existing curses session.
 
-The line editor deliberately touches one line at a time. This editor is the
-other mode: a scrollable text buffer with a cursor, syntax colors, undo and
-redo, SQLite snapshots and a save that verifies the disk copy.
+This is the only editor in the application: a scrollable text buffer with a
+cursor, syntax colors, undo and redo, SQLite snapshots and a save that
+verifies the disk copy. Search results and the file browser both open it
+through :func:`edit_file`, so selection, copy and paste behave the same
+everywhere.
 
 Capabilities are kept intentionally small and predictable. There is no plugin
 system; language support stays optional through the dev box, so the editor is
@@ -99,9 +101,29 @@ __all__ = [
     "FullEditor",
     "TextBuffer",
     "detect_newline",
+    "edit_file",
     "normalize_newlines",
     "read_editor_file",
 ]
+
+
+def edit_file(
+    stdscr,
+    theme: Optional[Theme],
+    history: Optional[SnapshotStore],
+    devbox: Optional[DevBoxSession],
+    file_path,
+    start_line: int = 0,
+) -> bool:
+    """Open the one editor surface for a file, optionally at a line.
+
+    The search view and the file browser both go through this function so
+    every way into an editor gets the same selection, copy, paste and save
+    behavior.
+    """
+    return FullEditor(stdscr, theme, history, devbox=devbox).edit(
+        Path(file_path), start_line=start_line
+    )
 
 
 def _devbox_advice(devbox, path: str) -> str:
@@ -165,13 +187,19 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         self._clipboard_guard_until = 0.0
         self._clipboard_guard_next = 0.0
 
-    def edit(self, file_path: Path) -> bool:
-        """Open the file and return True when at least one save happened."""
+    def edit(self, file_path: Path, start_line: int = 0) -> bool:
+        """Open the file and return True when at least one save happened.
+
+        ``start_line`` places the caret on that one-based line so a search
+        result opens straight at the matched code.
+        """
         reset_input_state()
         self.path = os.path.abspath(str(file_path))
         self.buffer = TextBuffer(read_editor_file(self.path))
         self.disk_digest = file_digest(self.path)
-        self.scroll_row = 0
+        if start_line > 0:
+            self.buffer.goto_line(start_line)
+        self.scroll_row = max(0, self.buffer.cursor_row - 5)
         self.x_offset = 0
         self.mode = "edit"
         self.error = ""

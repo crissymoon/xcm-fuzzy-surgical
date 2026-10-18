@@ -77,3 +77,25 @@ def test_results_keep_the_edited_line_selected():
 
         selected = controller.results[controller.selected_idx]
         assert (selected[0], selected[1]) == (target[0], target[1])
+
+
+def test_enter_opens_the_one_editor_at_the_matched_line(monkeypatch):
+    import fuzzy_surgical.tui_controller as tui_module
+
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        (directory / "app.py").write_text("alpha\nneedle\nomega\n")
+
+        controller = _controller(directory)
+        controller.query = "needle"
+        controller._update_results()
+        calls = []
+
+        def stub_edit_file(_screen, _theme, _history, _devbox, path, start_line=0):
+            calls.append((path, start_line))
+            return False
+
+        monkeypatch.setattr(tui_module, "edit_file", stub_edit_file)
+        controller._open_editor()
+
+        assert calls == [(str(directory / "app.py"), 2)]

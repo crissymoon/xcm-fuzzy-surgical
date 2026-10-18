@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from fuzzy_surgical import editor_mouse as editor_mouse_module
 from fuzzy_surgical import mouse, tui_controller as tui_module
-from fuzzy_surgical.editor_controller import EditorController
 from fuzzy_surgical.selection import ClipboardResult
 from fuzzy_surgical.full_editor import FullEditor, TextBuffer
 from fuzzy_surgical.indexer import FileIndexer
@@ -120,42 +119,6 @@ def test_full_editor_maps_a_click_to_the_line_and_column() -> None:
     assert editor._buffer_position(2, 0) == (0, 0)
     assert editor._buffer_position(1, 10) is None
     assert editor._buffer_position(9, 10) is None
-
-
-def test_line_editor_click_places_caret_and_switches_context() -> None:
-    editor = EditorController()
-    editor.context_lines = [(10, "one"), (11, "two")]
-    editor.active_ctx_idx = 0
-    editor.edited_line = "abcdef"
-    editor.cursor_pos = 6
-    editor.ctx_start = 0
-    editor.visible_ctx_count = 2
-    editor.edit_row = 6
-    editor.edit_view_start = 0
-
-    editor._handle_mouse(MouseEvent(2, 6, "click"))
-    assert editor.cursor_pos == 2
-
-    editor._handle_mouse(MouseEvent(5, 3, "click"))
-    assert editor.active_ctx_idx == 1
-    assert editor.edited_line == "two"
-
-    editor._handle_mouse(MouseEvent(1, 6, "click"))
-    assert editor.cursor_pos == 1
-    editor._handle_mouse(MouseEvent(20, 6, "click"))
-    assert editor.cursor_pos == 3
-
-
-def test_line_editor_wheel_moves_the_context_line() -> None:
-    editor = EditorController()
-    editor.context_lines = [(1, "one"), (2, "two"), (3, "three")]
-    editor.active_ctx_idx = 0
-    editor.edited_line = "one"
-
-    editor._handle_mouse(MouseEvent(0, 0, "scroll", 1))
-
-    assert editor.active_ctx_idx == 1
-    assert editor.edited_line == "two"
 
 
 def test_search_view_click_selects_a_result(monkeypatch) -> None:

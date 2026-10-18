@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import subprocess
 
-from fuzzy_surgical import editor_controller as line_editor_module
 from fuzzy_surgical import editor_mouse as editor_mouse_module
 from fuzzy_surgical import full_editor as editor_module
 from fuzzy_surgical import selection as selection_module
-from fuzzy_surgical.editor_controller import EditorController
 from fuzzy_surgical.full_editor import FullEditor, TextBuffer
 from fuzzy_surgical.mouse import MouseEvent
 from fuzzy_surgical.selection import ClipboardRead, ClipboardResult, read_clipboard
@@ -266,39 +264,6 @@ def test_menu_action_copy_uses_the_clipboard(monkeypatch) -> None:
 
     assert not editor.menu.visible
     assert "copied" in editor.notice
-
-
-def test_line_editor_pastes_at_the_caret(monkeypatch) -> None:
-    monkeypatch.setattr(
-        line_editor_module,
-        "read_clipboard",
-        lambda: ClipboardRead(True, "XY", "", "pbpaste"),
-    )
-    editor = EditorController()
-    editor.edited_line = "abc"
-    editor.cursor_pos = 1
-
-    editor._paste_clipboard()
-
-    assert editor.edited_line == "aXYbc"
-    assert editor.cursor_pos == 3
-    assert "Pasted 2 characters" in editor.notice
-
-
-def test_line_editor_paste_keeps_one_line(monkeypatch) -> None:
-    monkeypatch.setattr(
-        line_editor_module,
-        "read_clipboard",
-        lambda: ClipboardRead(True, "one\ntwo", "", "pbpaste"),
-    )
-    editor = EditorController()
-    editor.edited_line = "abc"
-    editor.cursor_pos = 3
-
-    editor._paste_clipboard()
-
-    assert editor.edited_line == "abcone"
-    assert "first line" in editor.notice
 
 
 def test_truncated_fragment_matches_a_middle_word() -> None:

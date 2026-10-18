@@ -40,22 +40,18 @@ def test_enter_opens_the_selected_file(tmp_path: Path, monkeypatch) -> None:
     source.write_text("print('hello')\n", encoding="utf-8")
     opened = []
 
-    class StubEditor:
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
-
-        def edit(self, path):
-            opened.append(str(path))
-            return True
+    def stub_edit_file(_screen, _theme, _history, _devbox, path, start_line=0):
+        opened.append((str(path), start_line))
+        return True
 
     keys = iter([curses.KEY_DOWN, "\n", 27])
-    monkeypatch.setattr(browser_module, "FullEditor", StubEditor)
+    monkeypatch.setattr(browser_module, "edit_file", stub_edit_file)
     monkeypatch.setattr(browser_module, "read_key", lambda _screen: next(keys))
 
     browser = FileBrowser(FakeScreen(), Theme(), tmp_path)
     changed = browser.run()
 
-    assert opened == [str(source)]
+    assert opened == [(str(source), 0)]
     assert changed == str(source)
 
 

@@ -1,6 +1,6 @@
 """SQLite backed snapshots of file contents.
 
-Every write made by the line editor or the full file editor can record the
+Every write made by the editor can record the
 previous on-disk text in a local SQLite database first. That gives the user a
 safety net when an edit goes wrong, without scattering backup files next to
 their source tree.

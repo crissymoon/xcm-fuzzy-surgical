@@ -2,7 +2,7 @@
 FuzzySurgical - a TUI fuzzy finder with surgical line replacement.
 """
 
-__version__ = "0.6.3"
+__version__ = "0.6.4"
 __author__ = "Crissy Moon"
 __license__ = "MIT"
 __url__ = "https://xcaliburmoon.net/"
@@ -17,7 +17,6 @@ __all__ = [
     "diagnostics_ui",
     "directory_navigator",
     "directory_picker",
-    "editor_controller",
     "editor_overlays",
     "file_browser",
     "full_editor",

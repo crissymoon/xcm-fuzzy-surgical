@@ -8,7 +8,7 @@
 
 A terminal fuzzy finder with syntax highlighted results, surgical line replacement, a file browser and LSP completion.
 
-FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, writes an edited line to disk on Enter, and then shows the text read back from the file. F3 opens a safe file browser, F4 opens the selected file in a whole-file editor, and every save can store the previous version in a local SQLite database for recovery. The editor speaks the Language Server Protocol for completion and diagnostics, and an optional dev box file adds project linters.
+FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, and opens the matching file at that line in one full editor on Enter. F3 opens the same editor from a safe file browser, and every save can store the previous version in a local SQLite database for recovery. The editor speaks the Language Server Protocol for completion and diagnostics, and an optional dev box file adds project linters.
 
 Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 
@@ -23,13 +23,13 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Fuzzy line search across every indexed text file, with literal substring matches ranked above scattered subsequences
 - Syntax highlighted results and editor context with a fallback highlighter when Pygments is unavailable
 - Preview rows scroll horizontally to the matched text instead of showing column zero
-- Mouse clicks select result and browser rows, place the caret at the clicked cell in both editors, and double clicks open the selected item
+- Mouse clicks select result and browser rows, place the caret at the clicked cell in the editor, and double clicks open the selected item
 - Drag with the mouse or trackpad to highlight text in the whole-file editor; the selection is copied shortly after dragging stops even when the terminal never reports a release, a short clipboard watch restores the whole block if the terminal replaces it with a word, and bracketed paste repairs a Cmd+V that still arrives truncated, so Ctrl+V, Cmd+V, Ctrl+C, Ctrl+X and the right-click menu all handle the full highlighted text through pbcopy, wl-copy, xclip, xsel, pbpaste or the Windows clipboard with an OSC 52 fallback
-- Wheel and trackpad scrolling works in the result list, directory picker, file browser and both editors, including the older ncurses wheel-down encoding used by macOS; trackpad events are accumulated so the view follows the finger, and the whole-file editor carries the caret with the scroll instead of leaving it behind
+- Wheel and trackpad scrolling works in the result list, directory picker, file browser and editor, including the older ncurses wheel-down encoding used by macOS; trackpad events are accumulated so the view follows the finger, and the editor carries the caret with the scroll instead of leaving it behind
 - Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file
 - Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path
-- Surgical line editing with surrounding context and a save that proves the disk copy
-- Enter, F2, Ctrl+S and Ctrl+W write straight from the edit screen, and Esc asks before discarding unsaved changes
+- Search results open in one full editor at the matched line, with surrounding context, a cursor and a save that proves the disk copy
+- Enter, Ctrl+S and F2 save the editor buffer, and Esc asks before discarding unsaved changes
 - The editor title and the result header show the absolute path, so duplicate file names in different folders are obvious
 - Go-to-line queries say when several files share the typed name instead of silently choosing one
 - Writes keep the existing inode, so Sublime, less and tail -f see the change immediately
@@ -39,8 +39,8 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Files changed by other programs are picked up automatically, and F5 rebuilds the index
 - Bounded, crash safe indexing with permission, binary file and symlink loop guards
 - F3 opens a fuzzy file browser with folders and text files, safe one-folder-at-a-time navigation and symlink loop guards
-- F4 opens the selected file in a whole-file editor with a cursor, undo and redo, page scrolling and syntax colors
-- Every line or whole-file save first stores the previous version in a local SQLite database, and F6 lists snapshots to restore
+- F3 and Enter open the same full editor, which has a cursor, undo and redo, page scrolling, selection, copy, paste and syntax colors
+- Every save first stores the previous version in a local SQLite database, and F6 lists snapshots to restore
 - Snapshots stay in the user data directory instead of beside the source tree, and --no-history turns them off
 - LSP completion in the full editor through any installed server: pylsp, pyright, typescript-language-server, gopls, rust-analyzer, jdtls, clangd, bash-language-server, lua-language-server, solargraph or intelephense
 - Python servers and linters installed inside the project virtual environment are found through the running interpreter, not only through PATH
@@ -153,12 +153,11 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | file.py:12 | Jump to line 12 in a matching file. Partial paths, bare file names and Windows paths work. If several files share the name, the status bar names the chosen file and asks for a folder. |
 | Up / Down | Move the selection one row. |
 | Page Up / Page Down | Move the selection one page. |
-| Mouse click | Select a row. Double click opens the line editor. |
+| Mouse click | Select a row. Double click opens the same editor at that line. |
 | Mouse wheel / trackpad | Scroll four rows per mouse notch. Trackpad events accumulate into smooth movement. |
 | Left / Right | Scroll long code lines horizontally. |
-| Enter | Edit the selected line after reloading it from disk. |
-| F3 | Browse folders and edit whole files. |
-| F4 | Open the selected file in the whole-file editor. |
+| Enter | Reload the selected file from disk and open it in the editor at the matched line. |
+| F3 | Browse folders and open files in the same editor. |
 | F2 | Open the directory picker. |
 | F5 | Reload the whole index, for example after a branch switch. |
 | F1 | Show help. |
@@ -187,7 +186,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Up / Down | Move the selection. |
 | Mouse click | Select a row. Double click opens a folder or edits the file. |
 | Mouse wheel / trackpad | Scroll four rows per mouse notch. Trackpad events accumulate into smooth movement. |
-| Enter | Open a folder or edit the selected file in the full editor. |
+| Enter | Open a folder or open the selected file in the editor. |
 | Backspace | Delete filter text, or move to the parent folder when the filter is empty. |
 | Ctrl+U | Clear the filter. |
 | Esc | Return to the search view. |
@@ -196,7 +195,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 
 | Key | Action |
 | --- | --- |
-| F4 | Open the selected file straight from the search view. |
+| Enter / F3 | Open the file from a search result at the matched line, or from the file browser. |
 | Arrows / Home / End | Move the cursor, wrapping between lines. |
 | Page Up / Page Down | Move one page. |
 | Mouse click | Place the cursor at the clicked cell. |
@@ -219,24 +218,6 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | F6 | List SQLite snapshots. Enter loads one into the buffer as unsaved text. |
 | F8 | Reload the file from disk. |
 | Esc | Ask before discarding unsaved changes. |
-| F1 | Show help. |
-
-### Line editor
-
-| Key | Action |
-| --- | --- |
-| Up / Down | Switch the active context line. |
-| Mouse click | Place the caret in the edit line, or switch the context line. |
-| Mouse wheel / trackpad | Move the active context line by one. Trackpad events accumulate so the list follows the finger. |
-| Right click | Open a menu with Copy line, Paste, Clear line and Save at the pointer. |
-| Ctrl+V | Paste at the caret. A multi-line clipboard pastes its first line, because this editor edits one line. |
-| Left / Right | Move the cursor. |
-| Home / End | Jump to the start or end of the line. |
-| Backspace / Delete | Edit the line. |
-| Enter | Save the edited lines to disk immediately, then show the text read back from the file. |
-| F2 | Save as well, for terminals that swallow Ctrl+S. |
-| Ctrl+S | Save immediately. Ctrl+W is an alias when the terminal captures Ctrl+S for flow control. |
-| Esc | Ask before discarding unsaved changes. In that prompt s saves, d discards and Esc keeps editing. |
 | F1 | Show help. |
 
 ## Language server and dev box
