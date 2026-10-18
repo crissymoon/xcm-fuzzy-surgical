@@ -138,10 +138,12 @@ def is_backspace(key) -> bool:
 
 
 def disable_flow_control():
-    """Turn off terminal XON/XOFF so Ctrl+S reaches the application.
+    """Turn off terminal XON/XOFF and line editing so app keys arrive.
 
-    Returns the previous termios attributes for restore_terminal_mode, or
-    None when the platform has no termios support.
+    Clears IXON/IXOFF (Ctrl+S was being eaten as XOFF) and IEXTEN, which is
+    what swallows Ctrl+V as the terminal's literal-next character before
+    curses ever sees it. Returns the previous termios attributes for
+    restore_terminal_mode, or None when the platform has no termios support.
     """
     if os.name == "nt":
         return None
@@ -160,6 +162,8 @@ def disable_flow_control():
         # IXON and IXOFF live in iflag, not lflag. Clearing only lflag leaves
         # the terminal eating Ctrl+S as XOFF, which made the save key vanish.
         updated[0] = original[0] & ~(termios.IXON | termios.IXOFF)
+        iexten = getattr(termios, "IEXTEN", 0)
+        updated[3] = original[3] & ~iexten
         termios.tcsetattr(descriptor, termios.TCSADRAIN, updated)
     except (OSError, termios.error):
         return None

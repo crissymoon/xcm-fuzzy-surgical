@@ -25,8 +25,13 @@ DOUBLE_CLICK_SECONDS = 0.45
 DEDUPE_SECONDS = 0.06
 CLICK_ECHO_SECONDS = 0.35
 CLICK_ECHO_DISTANCE = 2
+# Repeated right presses arrive when a terminal reports a horizontal
+# trackpad swipe through the same button as the right click. A burst is
+# swallowed so a swipe cannot open a menu on every tick.
+RIGHT_CLICK_BURST = 0.12
 MOUSE_KEY = getattr(curses, "KEY_MOUSE", -1)
 _LAST_SCROLL = [float("-inf"), 0, 0, 0]
+_LAST_RIGHT = [float("-inf")]
 
 
 def _bits(*names: str) -> int:
@@ -47,14 +52,15 @@ _CLICK_BITS = _bits(
 _PRIMARY_CLICK_BITS = _bits("BUTTON1_PRESSED", "BUTTON1_CLICKED")
 _PRESS_BITS = _bits("BUTTON1_PRESSED")
 _RELEASE_BITS = _bits("BUTTON1_RELEASED")
+# The right button opens the context menu. Middle button presses and older
+# horizontal wheel encodings stay ignored so they never move a selection.
+_RIGHT_CLICK_BITS = _bits("BUTTON3_PRESSED", "BUTTON3_CLICKED")
 # Older ncurses builds report horizontal wheel ticks as buttons 2 and 3. They
 # stay in the mask so the terminal encodes them as themselves instead of a
 # position report, which would otherwise look like wheel down.
 _IGNORED_BUTTON_BITS = _bits(
     "BUTTON2_PRESSED",
     "BUTTON2_CLICKED",
-    "BUTTON3_PRESSED",
-    "BUTTON3_CLICKED",
 )
 _SCROLL_UP_BITS = _bits("BUTTON4_PRESSED", "BUTTON4_CLICKED")
 _SCROLL_DOWN_BITS = _bits("BUTTON5_PRESSED", "BUTTON5_CLICKED")
@@ -93,6 +99,10 @@ class MouseEvent:
     def is_release(self) -> bool:
         return self.kind == "release"
 
+    @property
+    def is_right_click(self) -> bool:
+        return self.kind == "right_click"
+
 
 def mouse_available() -> bool:
     """Return True when the curses build exposes mouse functions."""
@@ -116,6 +126,7 @@ def enable_mouse(stdscr) -> bool:
     mask = (
         _CLICK_BITS
         | _RELEASE_BITS
+        | _RIGHT_CLICK_BITS
         | _IGNORED_BUTTON_BITS
         | _SCROLL_UP_BITS
         | _SCROLL_DOWN_BITS
@@ -166,6 +177,8 @@ def event_from_state(x: int, y: int, state: int) -> Optional[MouseEvent]:
         return MouseEvent(x, y, "scroll", -1)
     if _SCROLL_DOWN_BITS and state & _SCROLL_DOWN_BITS:
         return MouseEvent(x, y, "scroll", 1)
+    if _RIGHT_CLICK_BITS and state & _RIGHT_CLICK_BITS:
+        return MouseEvent(x, y, "right_click")
 
     global _BUTTON_HELD
     motion = bool(_REPORT_BIT and state & _REPORT_BIT)
@@ -191,8 +204,9 @@ def event_from_state(x: int, y: int, state: int) -> Optional[MouseEvent]:
 
 def reset_input_state() -> None:
     """Forget the last scroll and pressed button, for a clean view start."""
-    global _LAST_SCROLL, _BUTTON_HELD
+    global _LAST_SCROLL, _BUTTON_HELD, _LAST_RIGHT
     _LAST_SCROLL = [float("-inf"), 0, 0, 0]
+    _LAST_RIGHT = [float("-inf")]
     _BUTTON_HELD = False
 
 
@@ -214,6 +228,11 @@ def normalise_event(
         return None
 
     when = time.monotonic() if now is None else now
+    if event.is_right_click:
+        if when - _LAST_RIGHT[0] < RIGHT_CLICK_BURST:
+            return None
+        _LAST_RIGHT[0] = when
+        return event
     if event.is_scroll:
         _LAST_SCROLL[:] = [when, event.x, event.y, event.direction]
         return event

@@ -183,6 +183,47 @@ class TextBuffer:
         self.cursor_row = row + len(parts) - 1
         self.cursor_col = len(parts[-1])
 
+    def replace_range(
+        self,
+        start_row: int,
+        start_col: int,
+        end_row: int,
+        end_col: int,
+        text: str = "",
+    ) -> None:
+        """Replace a multi-line range and place the cursor after the new text.
+
+        Used by cut and paste, so the whole replacement is one undo step.
+        """
+        if start_row > end_row or (
+            start_row == end_row and start_col > end_col
+        ):
+            start_row, end_row = end_row, start_row
+            start_col, end_col = end_col, start_col
+        start_row = max(0, min(start_row, len(self.lines) - 1))
+        end_row = max(0, min(end_row, len(self.lines) - 1))
+        start_line = self.lines[start_row]
+        end_line = self.lines[end_row]
+        start_col = max(0, min(start_col, len(start_line)))
+        end_col = max(0, min(end_col, len(end_line)))
+        if start_row == end_row and start_col == end_col and not text:
+            return
+        self._begin_edit("range")
+        head = start_line[:start_col]
+        tail = end_line[end_col:]
+        inserted = normalize_newlines(text).split("\n") if text else [""]
+        if len(inserted) == 1:
+            self.lines[start_row : end_row + 1] = [head + inserted[0] + tail]
+            self.cursor_row = start_row
+            self.cursor_col = len(head) + len(inserted[0])
+            return
+        replacement = [head + inserted[0]]
+        replacement.extend(inserted[1:-1])
+        replacement.append(inserted[-1] + tail)
+        self.lines[start_row : end_row + 1] = replacement
+        self.cursor_row = start_row + len(inserted) - 1
+        self.cursor_col = len(inserted[-1])
+
     def insert_newline(self) -> None:
         self._begin_edit("newline")
         row = self.cursor_row

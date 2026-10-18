@@ -9,6 +9,7 @@ import curses
 import curses.ascii
 
 from fuzzy_surgical.colors import Theme
+from fuzzy_surgical.context_menu import ContextMenu, MenuItem
 from fuzzy_surgical.file_writer import FileWriteError, WriteResult, write_text
 from fuzzy_surgical.history import SnapshotStore
 from fuzzy_surgical.mouse import (
@@ -28,6 +29,7 @@ from fuzzy_surgical.renderer import (
     shorten,
     window_size,
 )
+from fuzzy_surgical.selection import copy_to_clipboard, read_clipboard
 from fuzzy_surgical.utils import (
     display_path,
     is_backspace,
@@ -37,6 +39,7 @@ from fuzzy_surgical.utils import (
 )
 
 CTRL_S = 19
+CTRL_V = 22
 CTRL_W = 23
 
 
@@ -66,6 +69,7 @@ class EditorController:
         self.saved_history_note = ""
         self.click_tracker = ClickTracker()
         self.scroll_gate = ScrollGate()
+        self.menu = ContextMenu()
         self.ctx_start = 0
         self.visible_ctx_count = 0
         self.edit_row = 0
@@ -136,18 +140,21 @@ class EditorController:
             self.cursor_pos = max(0, min(len(original_line), match_column))
         self.mode = "edit"
         self.save_error = ""
+        self.notice = ""
         self.last_save = None
         self.last_save_line = 0
         self.saved_history_note = ""
         self.saved_proof = ""
         self.saved_line_number = 0
         self.saved_edit_count = 0
+        self.menu.close()
 
         while True:
             self._draw_editor()
             key = read_key(self.stdscr)
             if key is None:
                 continue
+            self.notice = ""
 
             if self.mode == "edit":
                 if key == MOUSE_KEY:
@@ -155,11 +162,16 @@ class EditorController:
                     if event is not None:
                         self._handle_mouse(event)
                     continue
+                if self.menu.visible:
+                    self._handle_menu_key(key)
+                    continue
                 if key == curses.ascii.ESC:
                     if self._has_pending_changes():
                         self.mode = "discard"
                     else:
                         return False
+                elif key == CTRL_V:
+                    self._paste_clipboard()
                 elif key in (CTRL_S, CTRL_W) or key == curses.KEY_F2 or is_enter(key):
                     self._save_and_show_proof()
                 elif key == curses.KEY_UP:
@@ -279,6 +291,21 @@ class EditorController:
 
     def _handle_mouse(self, event: MouseEvent) -> None:
         """Move the caret or switch context lines from a click or wheel tick."""
+        if self.menu.visible:
+            if event.is_scroll:
+                self.menu.close()
+            elif event.is_right_click:
+                self._open_context_menu(event.x, event.y)
+            elif event.is_click:
+                item = self.menu.item_at(event.x, event.y)
+                if item is not None:
+                    self._run_menu_action(item.action)
+                elif not self.menu.contains(event.x, event.y):
+                    self.menu.close()
+            return
+        if event.is_right_click:
+            self._open_context_menu(event.x, event.y)
+            return
         if event.is_scroll:
             delta = self.scroll_gate.lines(event.direction, 1)
             if delta:
@@ -305,6 +332,103 @@ class EditorController:
         self._save_active_edit()
         self.active_ctx_idx = index
         self._load_active_edit()
+
+    def _open_context_menu(self, x: int, y: int) -> None:
+        """Offer clipboard actions for the line under the pointer."""
+        height, width = (
+            window_size(self.stdscr) if self.stdscr is not None else (24, 80)
+        )
+        has_text = bool(self.edited_line)
+        items = [
+            MenuItem("copy_line", "Copy line", "Ctrl+C", has_text, "c"),
+            MenuItem("paste", "Paste", "Ctrl+V", True, "v"),
+            MenuItem("clear_line", "Clear line", "", has_text, "l"),
+            MenuItem(
+                "save",
+                "Save",
+                "Enter",
+                self._pending_count() > 0,
+                "s",
+            ),
+        ]
+        self.menu.open(x, y, items, height, width)
+
+    def _handle_menu_key(self, key) -> None:
+        if key == curses.KEY_UP:
+            self.menu.move(-1)
+            return
+        if key == curses.KEY_DOWN:
+            self.menu.move(1)
+            return
+        if key == curses.ascii.ESC:
+            self.menu.close()
+            return
+        if is_enter(key):
+            self._activate_menu()
+            return
+        letter = printable_char(key)
+        if letter:
+            if self.menu.select_matching(letter):
+                self._activate_menu()
+            else:
+                self.menu.close()
+
+    def _activate_menu(self) -> None:
+        item = self.menu.selected_item()
+        if item is None:
+            self.menu.close()
+            return
+        self._run_menu_action(item.action)
+
+    def _run_menu_action(self, action: str) -> None:
+        self.menu.close()
+        if action == "copy_line":
+            self._copy_line()
+        elif action == "paste":
+            self._paste_clipboard()
+        elif action == "clear_line":
+            self.edited_line = ""
+            self.cursor_pos = 0
+            self.notice = "Line cleared. Enter saves."
+        elif action == "save":
+            self._save_and_show_proof()
+
+    def _copy_line(self) -> None:
+        if not self.edited_line:
+            self.save_error = "This line is empty, so there is nothing to copy."
+            return
+        result = copy_to_clipboard(self.edited_line)
+        if result.ok:
+            self.save_error = ""
+            self.notice = result.message
+        else:
+            self.save_error = result.message
+
+    def _paste_clipboard(self) -> None:
+        """Insert clipboard text at the caret, keeping the line a single line."""
+        read = read_clipboard()
+        if not read.ok:
+            self.save_error = read.message
+            return
+        if not read.text:
+            self.save_error = "Clipboard is empty."
+            return
+        text = read.text
+        note = ""
+        if "\n" in text or "\r" in text:
+            text = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")[0]
+            note = " from the first line only"
+        self.edited_line = (
+            self.edited_line[: self.cursor_pos]
+            + text
+            + self.edited_line[self.cursor_pos :]
+        )
+        self.cursor_pos += len(text)
+        self.save_error = ""
+        characters = len(text)
+        self.notice = (
+            f"Pasted {characters} character{'s' if characters != 1 else ''}{note}."
+        )
 
     def _move_context(self, delta: int) -> None:
         if delta == 0:
@@ -360,6 +484,8 @@ class EditorController:
             self._draw_discard_mode(height, width)
         else:
             self._draw_help_mode(height, width)
+        if self.mode == "edit" and self.menu.visible:
+            self.menu.draw(self.stdscr, self.theme, height, width)
 
         self.stdscr.refresh()
 
@@ -477,8 +603,17 @@ class EditorController:
                 self.save_error[: width - 1],
                 self.theme.attr("ui.error", bold=True),
             )
+        elif self.notice:
+            safe_addstr(
+                self.stdscr,
+                edit_y + 2,
+                0,
+                self.notice[: width - 1],
+                self.theme.attr("ui.success"),
+            )
         help_text = (
-            f"Enter save  F2 save  Esc discard  Up/Down line  F1 help{changed_label}"
+            f"Enter save  F2 save  Esc discard  Up/Down line  "
+            f"Right click actions  F1 help{changed_label}"
         )
         safe_addstr(
             self.stdscr,
@@ -586,6 +721,8 @@ class EditorController:
             "Home / End     jump to start or end",
             "Mouse click    place the caret or switch context line",
             "Mouse wheel    scroll the context by one line",
+            "Right click    copy the line, paste, clear or save",
+            "Ctrl+V         paste at the caret",
             "Delete         remove the character under the cursor",
             "Backspace      delete the previous character",
             "Enter          save the edited lines to disk",

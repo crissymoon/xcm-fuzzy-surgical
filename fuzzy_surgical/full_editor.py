@@ -21,6 +21,7 @@ import curses.ascii
 
 from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.completion_ui import CompletionPopup
+from fuzzy_surgical.context_menu import ContextMenu, MenuItem
 from fuzzy_surgical.devbox import DevBoxSession
 from fuzzy_surgical.diagnostics_ui import DiagnosticPanel
 from fuzzy_surgical.editor_overlays import (
@@ -49,7 +50,12 @@ from fuzzy_surgical.renderer import (
     shorten,
     window_size,
 )
-from fuzzy_surgical.selection import Selection, copy_to_clipboard, draw_selection
+from fuzzy_surgical.selection import (
+    Selection,
+    copy_to_clipboard,
+    draw_selection,
+    read_clipboard,
+)
 from fuzzy_surgical.text_buffer import (
     EditorOpenError,
     TextBuffer,
@@ -73,11 +79,20 @@ CTRL_C = 3
 CTRL_L = 12
 CTRL_N = 14
 CTRL_S = 19
+CTRL_V = 22
 CTRL_W = 23
+CTRL_X = 24
 CTRL_Y = 25
 CTRL_Z = 26
 TAB = 9
+SPACE = 32
 COMPLETION_DELAY = 0.18
+SHIFT_UP = getattr(curses, "KEY_SR", 337)
+SHIFT_DOWN = getattr(curses, "KEY_SF", 336)
+SHIFT_LEFT = getattr(curses, "KEY_SLEFT", 393)
+SHIFT_RIGHT = getattr(curses, "KEY_SRIGHT", 402)
+SHIFT_HOME = getattr(curses, "KEY_SHOME", 391)
+SHIFT_END = getattr(curses, "KEY_SEND", 394)
 
 __all__ = [
     "EditorOpenError",
@@ -134,6 +149,7 @@ class FullEditor:
         self.scroll_gate = ScrollGate()
         self.selection = Selection()
         self.completion = CompletionPopup()
+        self.menu = ContextMenu()
         self.diagnostics_panel = DiagnosticPanel()
         self.diagnostics = []
         self.assist_status = ""
@@ -156,6 +172,7 @@ class FullEditor:
         self.last_save = None
         self.selection.clear()
         self.completion = CompletionPopup()
+        self.menu.close()
         self.diagnostics_panel = DiagnosticPanel()
         self.diagnostics = []
         self._completion_due_at = 0.0
@@ -343,8 +360,16 @@ class FullEditor:
 
     def _handle_edit_key(self, key) -> bool:
         self.error = ""
+        if self.menu.visible:
+            return self._handle_menu_key(key)
         if key == CTRL_C:
             self._copy_selection()
+            return False
+        if key == CTRL_X:
+            self._cut_selection()
+            return False
+        if key == CTRL_V:
+            self._paste_clipboard()
             return False
         if key == CTRL_A:
             self.selection.select_all(self.buffer.lines)
@@ -393,6 +418,12 @@ class FullEditor:
             return False
 
         edited = False
+        if self.selection.has_text:
+            if is_backspace(key) or key == curses.KEY_DC:
+                self._delete_selection()
+                return False
+            if self._key_inserts_text(key):
+                self._delete_selection()
         if key == curses.ascii.ESC:
             if self.buffer.dirty:
                 self.mode = "discard"
@@ -423,6 +454,18 @@ class FullEditor:
             self.buffer.move_up()
         elif key == curses.KEY_DOWN:
             self.buffer.move_down()
+        elif key == SHIFT_LEFT:
+            self._extend_selection("left")
+        elif key == SHIFT_RIGHT:
+            self._extend_selection("right")
+        elif key == SHIFT_UP:
+            self._extend_selection("up")
+        elif key == SHIFT_DOWN:
+            self._extend_selection("down")
+        elif key == SHIFT_HOME:
+            self._extend_selection("home")
+        elif key == SHIFT_END:
+            self._extend_selection("end")
         elif key == curses.KEY_LEFT:
             self.buffer.move_left()
             self.completion.close()
@@ -477,8 +520,202 @@ class FullEditor:
         else:
             self.error = result.message
 
+    def _cut_selection(self) -> None:
+        """Copy the selection and remove it, in one undoable change."""
+        if not self.selection.has_text:
+            self.notice = "Nothing selected to cut."
+            return
+        text = self.selection.text(self.buffer.lines)
+        result = copy_to_clipboard(text)
+        if not result.ok:
+            self.error = result.message
+            return
+        label = self._selection_label(text)
+        self._delete_selection()
+        self.error = ""
+        self.notice = f"Cut {label} to the clipboard."
+
+    def _delete_selection(self) -> None:
+        """Remove the selected range as a single undo step."""
+        if not self.selection.has_text:
+            return
+        (start_row, start_col), (end_row, end_col) = self.selection.ordered()
+        self.buffer.replace_range(start_row, start_col, end_row, end_col, "")
+        self.selection.clear()
+        self._after_cursor_move()
+        self._after_edit()
+
+    def _paste_clipboard(self) -> None:
+        """Insert the system clipboard at the caret, replacing a selection."""
+        read = read_clipboard()
+        if not read.ok:
+            self.error = read.message
+            return
+        if not read.text:
+            self.notice = "Clipboard is empty."
+            return
+        if self.selection.has_text:
+            (start_row, start_col), (end_row, end_col) = self.selection.ordered()
+            self.buffer.replace_range(
+                start_row, start_col, end_row, end_col, read.text
+            )
+        else:
+            self.buffer.insert_text(read.text)
+        self.selection.clear()
+        self._after_cursor_move()
+        self._after_edit()
+        self.error = ""
+        self.notice = f"Pasted {self._selection_label(read.text)} ({read.method})."
+
+    @staticmethod
+    def _selection_label(text: str) -> str:
+        characters = len(text)
+        label = f"{characters} character{'s' if characters != 1 else ''}"
+        lines = text.count("\n") + 1
+        if lines > 1:
+            label = f"{lines} lines, {label}"
+        return label
+
+    @staticmethod
+    def _key_inserts_text(key) -> bool:
+        return is_enter(key) or key == TAB or printable_char(key) is not None
+
+    def _extend_selection(self, direction: str) -> None:
+        """Move the caret with Shift held, extending the selection."""
+        if not self.selection.active:
+            self.selection.start(
+                self.buffer.cursor_row, self.buffer.cursor_col
+            )
+        if direction == "left":
+            self.buffer.move_left()
+        elif direction == "right":
+            self.buffer.move_right()
+        elif direction == "up":
+            self.buffer.move_up()
+        elif direction == "down":
+            self.buffer.move_down()
+        elif direction == "home":
+            self.buffer.move_home()
+        elif direction == "end":
+            self.buffer.move_end()
+        self.selection.extend(self.buffer.cursor_row, self.buffer.cursor_col)
+        self._after_cursor_move()
+
+    # -- context menu --------------------------------------------------
+    def _open_context_menu(self, x: int, y: int) -> None:
+        """Show the right-click menu at the pointer."""
+        height, width = window_size(self.stdscr) if self.stdscr is not None else (24, 80)
+        selected = self.selection.has_text
+        items = [
+            MenuItem("cut", "Cut", "Ctrl+X", selected, "x"),
+            MenuItem("copy", "Copy", "Ctrl+C", selected, "c"),
+            MenuItem("paste", "Paste", "Ctrl+V", True, "v"),
+            MenuItem(
+                "select_all",
+                "Select all",
+                "Ctrl+A",
+                self.buffer.line_count > 0,
+                "a",
+            ),
+            MenuItem(
+                "undo", "Undo", "Ctrl+Z", bool(self.buffer.undo_stack), "u"
+            ),
+            MenuItem(
+                "redo", "Redo", "Ctrl+Y", bool(self.buffer.redo_stack), "r"
+            ),
+            MenuItem("save", "Save", "Ctrl+S", self.buffer.dirty, "s"),
+        ]
+        self.completion.close()
+        self.diagnostics_panel.close()
+        self.menu.open(x, y, items, height, width)
+
+    def _handle_menu_key(self, key) -> bool:
+        if key == curses.KEY_UP:
+            self.menu.move(-1)
+            return False
+        if key == curses.KEY_DOWN:
+            self.menu.move(1)
+            return False
+        if key == curses.ascii.ESC:
+            self.menu.close()
+            return False
+        if is_enter(key) or key == SPACE:
+            self._activate_menu()
+            return False
+        letter = printable_char(key)
+        if letter:
+            if self.menu.select_matching(letter):
+                self._activate_menu()
+            else:
+                self.menu.close()
+        return False
+
+    def _activate_menu(self) -> None:
+        item = self.menu.selected_item()
+        if item is None:
+            self.menu.close()
+            return
+        self._run_menu_action(item.action)
+
+    def _run_menu_action(self, action: str) -> None:
+        self.menu.close()
+        self.error = ""
+        if action == "cut":
+            self._cut_selection()
+        elif action == "copy":
+            self._copy_selection()
+        elif action == "paste":
+            self._paste_clipboard()
+        elif action == "select_all":
+            self.selection.select_all(self.buffer.lines)
+            self.buffer.set_cursor(
+                self.selection.head_row, self.selection.head_col
+            )
+            self.notice = f"Selected {self.buffer.line_count} lines. Ctrl+C copies."
+        elif action == "undo":
+            self._undo()
+        elif action == "redo":
+            self._redo()
+        elif action == "save":
+            self._save()
+
+    def _undo(self) -> None:
+        if not self.buffer.undo():
+            self.notice = "Nothing to undo."
+            return
+        self.selection.clear()
+        self._after_cursor_move()
+        self._after_edit()
+
+    def _redo(self) -> None:
+        if not self.buffer.redo():
+            self.notice = "Nothing to redo."
+            return
+        self.selection.clear()
+        self._after_cursor_move()
+        self._after_edit()
+
     def _handle_mouse(self, event: MouseEvent) -> None:
         """Apply a click, drag, release or wheel tick to the active mode."""
+        if self.menu.visible:
+            if event.is_scroll:
+                self.menu.close()
+                self._scroll_mouse(event.direction)
+                return
+            if event.is_right_click:
+                self._open_context_menu(event.x, event.y)
+                return
+            if event.is_click:
+                item = self.menu.item_at(event.x, event.y)
+                if item is not None:
+                    self._run_menu_action(item.action)
+                elif not self.menu.contains(event.x, event.y):
+                    self.menu.close()
+            return
+        if event.is_right_click:
+            if self.mode == "edit":
+                self._open_context_menu(event.x, event.y)
+            return
         if event.is_scroll:
             self._scroll_mouse(event.direction)
             return
@@ -828,6 +1065,8 @@ class FullEditor:
         else:
             self._draw_help(height, width)
         self._draw_status(height, width)
+        if self.mode == "edit" and self.menu.visible:
+            self.menu.draw(self.stdscr, self.theme, height, width)
         self.stdscr.refresh()
 
     def _draw_header(self, height: int, width: int) -> None:

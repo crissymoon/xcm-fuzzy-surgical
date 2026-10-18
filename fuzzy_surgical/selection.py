@@ -23,6 +23,8 @@ from fuzzy_surgical.renderer import safe_addstr, sanitize
 
 MAX_OSC52_BYTES = 100_000
 CLIPBOARD_TIMEOUT = 2.0
+# A paste larger than this is refused instead of freezing the buffer.
+MAX_PASTE_CHARS = 1_000_000
 WORD_CHARS = "_"
 
 Span = Tuple[int, int]
@@ -34,6 +36,16 @@ class ClipboardResult:
 
     ok: bool
     message: str
+    method: str = ""
+
+
+@dataclass(frozen=True)
+class ClipboardRead:
+    """Outcome of a paste attempt, ready to show to the user."""
+
+    ok: bool
+    text: str = ""
+    message: str = ""
     method: str = ""
 
 
@@ -94,6 +106,73 @@ def _osc52(text: str, stream) -> bool:
     except (OSError, ValueError):
         return False
     return True
+
+
+def paste_commands(platform: Optional[str] = None) -> List[List[str]]:
+    """Return the native clipboard readers for this platform, best first."""
+    name = (platform or sys.platform).lower()
+    if name.startswith("darwin"):
+        return [["pbpaste"]]
+    if name.startswith("win") or os.name == "nt":
+        script = "Get-Clipboard -Raw"
+        return [
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            ["pwsh", "-NoProfile", "-NonInteractive", "-Command", script],
+        ]
+    return [
+        ["wl-paste", "--type", "text"],
+        ["xclip", "-selection", "clipboard", "-o"],
+        ["xsel", "--clipboard", "--output"],
+    ]
+
+
+def _read_native(commands: Sequence[Sequence[str]]) -> Tuple[str, str]:
+    """Run the first working clipboard reader, returning (text, method)."""
+    for command in commands:
+        try:
+            completed = subprocess.run(
+                list(command),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=CLIPBOARD_TIMEOUT,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if completed.returncode != 0:
+            continue
+        text = completed.stdout.decode("utf-8", "surrogateescape")
+        return text, " ".join(command)
+    return "", ""
+
+
+def read_clipboard(
+    *,
+    platform: Optional[str] = None,
+    max_chars: int = MAX_PASTE_CHARS,
+) -> ClipboardRead:
+    """Read the system clipboard for a paste.
+
+    Reading through OSC 52 is not portable, so this only uses the platform
+    helpers. A missing helper returns a message instead of raising, which keeps
+    the editor usable on a bare terminal.
+    """
+    text, method = _read_native(paste_commands(platform))
+    if not method:
+        return ClipboardRead(
+            False,
+            message="No clipboard tool found. Install pbpaste, wl-paste or xclip.",
+            method="missing",
+        )
+    text = text.replace("\x00", "")
+    if len(text) > max_chars:
+        return ClipboardRead(
+            False,
+            message=f"Clipboard is larger than {max_chars} characters and was not pasted.",
+            method=method,
+        )
+    return ClipboardRead(True, text=text, message="", method=method)
 
 
 def copy_to_clipboard(

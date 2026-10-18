@@ -198,13 +198,32 @@ def test_search_view_double_click_opens_the_editor(monkeypatch) -> None:
     assert opened == [True]
 
 
-def test_horizontal_wheel_ticks_are_not_clicks() -> None:
+def test_middle_button_is_ignored_and_right_button_opens_a_menu() -> None:
     import curses
 
-    for name in ("BUTTON2_PRESSED", "BUTTON3_PRESSED"):
-        state = int(getattr(curses, name, 0))
-        if state:
-            assert mouse.event_from_state(1, 1, state) is None
+    middle = int(getattr(curses, "BUTTON2_PRESSED", 0))
+    if middle:
+        assert mouse.event_from_state(1, 1, middle) is None
+
+    right = int(getattr(curses, "BUTTON3_PRESSED", 0))
+    if right:
+        event = mouse.event_from_state(1, 1, right)
+        assert event is not None
+        assert event.is_right_click
+        assert not event.is_click
+
+
+def test_right_click_burst_is_suppressed(monkeypatch) -> None:
+    monkeypatch.setattr(mouse, "_RIGHT_CLICK_BITS", 0x2000)
+    mouse.reset_input_state()
+
+    first = mouse.normalise_event(4, 4, 0x2000, now=10.0)
+    second = mouse.normalise_event(4, 4, 0x2000, now=10.05)
+    later = mouse.normalise_event(4, 4, 0x2000, now=10.5)
+
+    assert first is not None and first.is_right_click
+    assert second is None
+    assert later is not None and later.is_right_click
 
 
 def test_full_editor_scroll_carries_the_caret_with_the_view() -> None:

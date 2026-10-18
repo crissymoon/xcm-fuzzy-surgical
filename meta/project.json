@@ -2,7 +2,7 @@
   "schema_version": 1,
   "name": "fuzzy-surgical",
   "display_name": "FuzzySurgical",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "tagline": "A terminal fuzzy finder with syntax highlighted results, surgical line replacement, a file browser and LSP completion.",
   "summary": "FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, writes an edited line to disk on Enter, and then shows the text read back from the file. F3 opens a safe file browser, F4 opens the selected file in a whole-file editor, and every save can store the previous version in a local SQLite database for recovery. The editor speaks the Language Server Protocol for completion and diagnostics, and an optional dev box file adds project linters.",
   "author": {
@@ -47,7 +47,7 @@
     "Syntax highlighted results and editor context with a fallback highlighter when Pygments is unavailable",
     "Preview rows scroll horizontally to the matched text instead of showing column zero",
     "Mouse clicks select result and browser rows, place the caret at the clicked cell in both editors, and double clicks open the selected item",
-    "Drag with the mouse or trackpad to highlight text in the whole-file editor, copy it with Ctrl+C through pbcopy, wl-copy, xclip, xsel or an OSC 52 fallback, and select a word or line with a double or triple click",
+    "Drag with the mouse or trackpad to highlight text in the whole-file editor, then use Ctrl+C, Ctrl+X and Ctrl+V or the right-click menu to copy, cut and paste through pbcopy, wl-copy, xclip, xsel, pbpaste or the Windows clipboard, with an OSC 52 fallback for copying",
     "Wheel and trackpad scrolling works in the result list, directory picker, file browser and both editors, including the older ncurses wheel-down encoding used by macOS; trackpad events are accumulated so the view follows the finger, and the whole-file editor carries the caret with the scroll instead of leaving it behind",
     "Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file",
     "Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path",
@@ -435,6 +435,18 @@
           "Select the whole file, then copy the selection. Copying uses the platform clipboard tool and falls back to an OSC 52 terminal escape."
         ],
         [
+          "Right click",
+          "Open a menu at the pointer with Cut, Copy, Paste, Select all, Undo, Redo and Save. Shortcut letters x, c, v, a, u, r and s activate an item."
+        ],
+        [
+          "Ctrl+X / Ctrl+V",
+          "Cut the selection or paste at the caret. A paste replaces a selection, and typing or Backspace over a selection replaces it like a normal editor."
+        ],
+        [
+          "Shift+arrows",
+          "Extend the selection from the caret, with Home, End, Up and Down variants."
+        ],
+        [
           "Mouse wheel / trackpad",
           "Scroll four lines per mouse notch. The caret and viewport move together, so the view follows the pointer."
         ],
@@ -502,6 +514,14 @@
         [
           "Mouse wheel / trackpad",
           "Move the active context line by one. Trackpad events accumulate so the list follows the finger."
+        ],
+        [
+          "Right click",
+          "Open a menu with Copy line, Paste, Clear line and Save at the pointer."
+        ],
+        [
+          "Ctrl+V",
+          "Paste at the caret. A multi-line clipboard pastes its first line, because this editor edits one line."
         ],
         [
           "Left / Right",
