@@ -325,6 +325,26 @@ venv\Scripts\python scripts\build_readme.py --check
 venv\Scripts\python -m flake8 main.py fuzzy_surgical tests scripts
 ```
 
+Docker:
+
+The container harness proves a clean install and the interactive TUI. The Linux image runs anywhere Docker runs; the Windows Server Core image needs a Windows host in Windows container mode.
+
+```bash
+docker/run-tests.sh linux
+docker/run-tests.sh linux-shell
+```
+
+Windows PowerShell host:
+
+```powershell
+docker\run-tests.ps1
+docker\run-tests.ps1 -Target windows-shell
+```
+
+- docker/run-tests.sh windows refuses to start on macOS or Linux because Windows containers require the Windows kernel.
+- The Linux harness runs the suite, flake8, the README check, install.sh, a headless end-to-end script and the TUI in a pseudo terminal.
+- The Windows Server Core harness runs install.ps1, the generated .cmd launcher, the Windows drive-letter paths and the suite under windows-curses.
+
 - scripts/build_readme.py --check fails when README.md is stale or when the version in meta/project.json does not match fuzzy_surgical/__init__.py.
 - Regenerate README.md with scripts/build_readme.py after editing meta/project.json, and run the --check mode before committing.
 

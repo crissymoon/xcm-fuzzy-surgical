@@ -48,15 +48,29 @@ if ($Uninstall) {
     exit 0
 }
 
+function Test-PythonCandidate {
+    param([hashtable]$Candidate)
+    $arguments = @($Candidate.Args) + @(
+        "-c",
+        "import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)"
+    )
+    & $Candidate.Exe @arguments > $null 2>&1
+    return ($LASTEXITCODE -eq 0)
+}
+
 function Find-Python {
-    if (Get-Command py -ErrorAction SilentlyContinue) {
-        return @{ Exe = "py"; Args = @("-3") }
-    }
-    if (Get-Command python -ErrorAction SilentlyContinue) {
-        return @{ Exe = "python"; Args = @() }
-    }
-    if (Get-Command python3 -ErrorAction SilentlyContinue) {
-        return @{ Exe = "python3"; Args = @() }
+    $candidates = @(
+        @{ Exe = "py"; Args = @("-3") },
+        @{ Exe = "python"; Args = @() },
+        @{ Exe = "python3"; Args = @() }
+    )
+    foreach ($candidate in $candidates) {
+        if (-not (Get-Command $candidate.Exe -ErrorAction SilentlyContinue)) {
+            continue
+        }
+        if (Test-PythonCandidate -Candidate $candidate) {
+            return $candidate
+        }
     }
     return $null
 }
@@ -65,7 +79,7 @@ $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 if (-not (Test-Path $VenvPython)) {
     $Python = Find-Python
     if ($null -eq $Python) {
-        throw "Python 3.8 or newer was not found. Install it from python.org first."
+        throw "Python 3.9 or newer was not found. Install it from python.org first."
     }
     Write-Host "Creating virtual environment in $VenvDir"
     if ($Python.Args.Count -gt 0) {
@@ -79,6 +93,11 @@ if (-not (Test-Path $VenvPython)) {
     if (-not (Test-Path $VenvPython)) {
         throw "The virtual environment was not created."
     }
+}
+
+& $VenvPython -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)"
+if ($LASTEXITCODE -ne 0) {
+    throw "The virtual environment is older than Python 3.9. Remove $VenvDir and try again."
 }
 
 Write-Host "Installing dependencies"

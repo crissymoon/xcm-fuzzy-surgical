@@ -251,6 +251,22 @@ def _render_development(section: Dict[str, Any]) -> List[str]:
             "",
         ]
     )
+    docker = section.get("docker")
+    if docker:
+        lines.extend(["Docker:", "", str(docker.get("intro", "")).strip(), ""])
+        if docker.get("commands"):
+            lines.extend([_code_block("bash", docker["commands"]), ""])
+        if docker.get("windows_commands"):
+            lines.extend(
+                [
+                    "Windows PowerShell host:",
+                    "",
+                    _code_block("powershell", docker["windows_commands"]),
+                    "",
+                ]
+            )
+        lines.extend(_bullets(docker.get("notes", [])).splitlines())
+        lines.append("")
     lines.extend(_bullets(section.get("notes", [])).splitlines())
     lines.append("")
     return lines

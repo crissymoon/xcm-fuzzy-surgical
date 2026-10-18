@@ -1,0 +1,57 @@
+# syntax=docker/dockerfile:1
+# Clean-room Linux, macOS-equivalent and WSL-equivalent test image.
+# Runs the full suite, the installer, the headless smoke test and a PTY run.
+FROM debian:12-slim
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+ARG TARGETARCH
+ARG PWSH_VERSION=7.4.6
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        git \
+        libicu72 \
+        ncurses-base \
+        ncurses-term \
+        procps \
+        python3 \
+        python3-pip \
+        python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+# PowerShell Core is only used to parse and lint install.ps1. The Windows
+# Server Core image is the one that executes the installer for real.
+RUN set -eu; \
+    case "${TARGETARCH:-$(dpkg --print-architecture)}" in \
+        amd64) pwsh_arch=x64 ;; \
+        arm64) pwsh_arch=arm64 ;; \
+        *) echo "unsupported architecture for PowerShell" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/pwsh.tar.gz \
+        "https://github.com/PowerShell/PowerShell/releases/download/v${PWSH_VERSION}/powershell-${PWSH_VERSION}-linux-${pwsh_arch}.tar.gz"; \
+    mkdir -p /opt/microsoft/powershell/7; \
+    tar -xzf /tmp/pwsh.tar.gz -C /opt/microsoft/powershell/7; \
+    rm /tmp/pwsh.tar.gz; \
+    chmod +x /opt/microsoft/powershell/7/pwsh; \
+    ln -s /opt/microsoft/powershell/7/pwsh /usr/local/bin/pwsh; \
+    pwsh -NoLogo -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
+
+RUN useradd --create-home --home-dir /home/tester --shell /bin/bash tester
+
+WORKDIR /src
+COPY . /src
+RUN chown -R tester:tester /src
+
+USER tester
+ENV HOME=/home/tester \
+    PATH=/home/tester/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+CMD ["bash", "docker/run-linux-tests.sh"]

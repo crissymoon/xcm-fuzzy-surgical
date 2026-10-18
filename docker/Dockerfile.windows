@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1
+# Windows Server Core harness. Build and run this on a Windows host with
+# Docker Desktop switched to Windows containers; Windows containers cannot run
+# on macOS or Linux. It exercises the real PowerShell installer, the generated
+# .cmd launcher and the windows-curses codepath.
+FROM mcr.microsoft.com/windows/servercore:ltsc2022
+
+SHELL ["powershell", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONIOENCODING=utf-8 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN $ProgressPreference = 'SilentlyContinue'; \
+    Invoke-WebRequest -UseBasicParsing -Uri 'https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe' -OutFile 'C:\python-installer.exe'; \
+    Start-Process -FilePath 'C:\python-installer.exe' -ArgumentList '/quiet','InstallAllUsers=1','Include_test=0','Include_launcher=1' -Wait; \
+    Remove-Item 'C:\python-installer.exe' -Force; \
+    if (-not (Test-Path 'C:\Python312\python.exe')) { throw 'Python 3.12 was not installed' }; \
+    & 'C:\Python312\python.exe' --version
+
+WORKDIR C:/src
+COPY . C:/src
+
+RUN & 'C:\Python312\python.exe' -m venv 'C:\src\venv'; \
+    if ($LASTEXITCODE -ne 0) { throw 'venv creation failed' }; \
+    & 'C:\src\venv\Scripts\python.exe' -m pip install --upgrade pip; \
+    if ($LASTEXITCODE -ne 0) { throw 'pip upgrade failed' }; \
+    & 'C:\src\venv\Scripts\python.exe' -m pip install -r 'C:\src\requirements-dev.txt'; \
+    if ($LASTEXITCODE -ne 0) { throw 'dependency install failed' }
+
+# Build-time proof that install.ps1 works on a clean Windows machine.
+RUN powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File 'C:\src\install.ps1'; \
+    if ($LASTEXITCODE -ne 0) { throw 'install.ps1 failed' }
+
+CMD ["powershell", "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "C:/src/docker/windows-smoke.ps1"]

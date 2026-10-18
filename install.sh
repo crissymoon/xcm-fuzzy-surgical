@@ -112,13 +112,13 @@ discover_python() {
         return 0
     fi
     if command -v python3 >/dev/null 2>&1 &&
-        python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null
+        python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null
     then
         printf 'python3'
         return 0
     fi
     if command -v python >/dev/null 2>&1 &&
-        python -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null
+        python -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null
     then
         printf 'python'
         return 0
@@ -138,11 +138,11 @@ if [ -z "$VENV_PY" ]; then
     if PYTHON_BIN="$(discover_python)"; then
         "$PYTHON_BIN" -m venv "$VENV_DIR"
     elif command -v py >/dev/null 2>&1 &&
-        py -3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null
+        py -3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null
     then
         py -3 -m venv "$VENV_DIR"
     else
-        printf 'Error: Python 3.8 or newer was not found.\n' >&2
+        printf 'Error: Python 3.9 or newer was not found.\n' >&2
         exit 1
     fi
 

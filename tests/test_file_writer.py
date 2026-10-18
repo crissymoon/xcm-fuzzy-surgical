@@ -37,6 +37,8 @@ def test_write_follows_symlink_target(tmp_path):
 
 
 def test_write_preserves_permissions(tmp_path):
+    if os.name == "nt":
+        pytest.skip("Windows does not report POSIX mode bits")
     path = tmp_path / "app.py"
     path.write_text("old\n", encoding="utf-8")
     path.chmod(0o640)
