@@ -10,6 +10,7 @@ import curses.ascii
 from fuzzy_surgical.context_menu import MenuItem
 from fuzzy_surgical.mouse import MouseEvent
 from fuzzy_surgical.renderer import index_for_display_column, sanitize, window_size
+from fuzzy_surgical.selection import copy_to_clipboard
 from fuzzy_surgical.utils import is_enter, printable_char
 
 SPACE = 32
@@ -157,10 +158,22 @@ class EditorMouseMixin:
             if self.selection.release():
                 text = self.selection.text(self.buffer.lines)
                 if text:
-                    self.notice = (
-                        f"Selected {self._selection_label(text)}. "
-                        "Ctrl+C copies, right click or F10 for actions."
-                    )
+                    # Put the selection on the clipboard as soon as the drag
+                    # ends. Terminal users habitually press Cmd+C, which the
+                    # terminal keeps for itself, so the block must already be
+                    # copied for their paste to receive all of it.
+                    result = copy_to_clipboard(text)
+                    if result.ok:
+                        self._remember_clipboard(text)
+                        self.notice = (
+                            f"{result.message} Ctrl+V pastes it, "
+                            "right click or F10 opens the actions."
+                        )
+                    else:
+                        self.notice = (
+                            f"Selected {self._selection_label(text)}. "
+                            "Ctrl+C copies, right click or F10 for actions."
+                        )
             return
         if event.is_drag:
             if not self.selection.active:

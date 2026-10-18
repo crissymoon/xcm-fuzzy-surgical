@@ -5,8 +5,8 @@ other mode: a scrollable text buffer with a cursor, syntax colors, undo and
 redo, SQLite snapshots and a save that verifies the disk copy.
 
 Capabilities are kept intentionally small and predictable. There is no plugin
-system and no language server: the goal is a safe in-terminal fix for a file
-the user just found with the fuzzy search.
+system; language support stays optional through the dev box, so the editor is
+still a safe in-terminal fix for a file the user just found with the search.
 """
 
 from __future__ import annotations
@@ -73,6 +73,7 @@ CTRL_Z = 26
 TAB = 9
 SPACE = 32
 COMPLETION_DELAY = 0.18
+CLIPBOARD_FALLBACK_SECONDS = 300.0
 SHIFT_UP = getattr(curses, "KEY_SR", 337)
 SHIFT_DOWN = getattr(curses, "KEY_SF", 336)
 SHIFT_LEFT = getattr(curses, "KEY_SLEFT", 393)
@@ -142,6 +143,11 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         self._completion_due_at = 0.0
         self._completion_manual = False
         self._completion_pending = False
+        # The exact text this editor last copied. Paste falls back to it when
+        # the system clipboard holds only a truncated prefix, which happens
+        # when a terminal copies its own stale selection over ours.
+        self.clipboard_text = ""
+        self.clipboard_at = 0.0
 
     def edit(self, file_path: Path) -> bool:
         """Open the file and return True when at least one save happened."""
@@ -506,10 +512,39 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         text = self.selection.text(self.buffer.lines)
         result = copy_to_clipboard(text)
         if result.ok:
+            self._remember_clipboard(text)
             self.error = ""
             self.notice = result.message
         else:
             self.error = result.message
+
+    def _remember_clipboard(self, text: str) -> None:
+        """Keep the exact copied text for a verified paste fallback."""
+        self.clipboard_text = text
+        self.clipboard_at = time.monotonic()
+
+    def _clipboard_is_fresh(self) -> bool:
+        return (
+            bool(self.clipboard_text)
+            and time.monotonic() - self.clipboard_at <= CLIPBOARD_FALLBACK_SECONDS
+        )
+
+    @staticmethod
+    def _clipboard_was_truncated(system_text: str, copied_text: str) -> bool:
+        """Return True when the system clipboard holds a leading word only.
+
+        Some terminals copy their own stale selection when the user presses
+        Cmd+C, which can replace an in-app copy with the first word of it.
+        A shorter value that is a word-boundary prefix of the text this editor
+        copied is treated as truncation rather than a fresh external copy.
+        """
+        trimmed = system_text.rstrip("\r\n")
+        if not trimmed or len(trimmed) >= len(copied_text):
+            return False
+        if not copied_text.startswith(trimmed):
+            return False
+        following = copied_text[len(trimmed) : len(trimmed) + 1]
+        return bool(following) and following.isspace()
 
     def _cut_selection(self) -> None:
         """Copy the selection and remove it, in one undoable change."""
@@ -521,6 +556,7 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         if not result.ok:
             self.error = result.message
             return
+        self._remember_clipboard(text)
         label = self._selection_label(text)
         self._delete_selection()
         self.error = ""
@@ -537,26 +573,39 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         self._after_edit()
 
     def _paste_clipboard(self) -> None:
-        """Insert the system clipboard at the caret, replacing a selection."""
+        """Insert the system clipboard at the caret, replacing a selection.
+
+        The system clipboard wins unless it looks like a truncated version of
+        text this editor just copied. That fallback keeps a multi-word copy
+        intact when a terminal overwrites the clipboard with its own stale
+        single-word selection.
+        """
         read = read_clipboard()
-        if not read.ok:
-            self.error = read.message
-            return
-        if not read.text:
-            self.notice = "Clipboard is empty."
+        text = read.text if read.ok else ""
+        method = read.method if read.ok else ""
+        if self._clipboard_is_fresh():
+            if not text:
+                text, method = self.clipboard_text, "app clipboard"
+            elif self._clipboard_was_truncated(text, self.clipboard_text):
+                text, method = self.clipboard_text, "app clipboard"
+        if not text:
+            if not read.ok:
+                self.error = read.message
+            else:
+                self.notice = "Clipboard is empty."
             return
         if self.selection.has_text:
             (start_row, start_col), (end_row, end_col) = self.selection.ordered()
             self.buffer.replace_range(
-                start_row, start_col, end_row, end_col, read.text
+                start_row, start_col, end_row, end_col, text
             )
         else:
-            self.buffer.insert_text(read.text)
+            self.buffer.insert_text(text)
         self.selection.clear()
         self._after_cursor_move()
         self._after_edit()
         self.error = ""
-        self.notice = f"Pasted {self._selection_label(read.text)} ({read.method})."
+        self.notice = f"Pasted {self._selection_label(text)} ({method})."
 
     @staticmethod
     def _selection_label(text: str) -> str:

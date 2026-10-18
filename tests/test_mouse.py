@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from fuzzy_surgical import editor_mouse as editor_mouse_module
 from fuzzy_surgical import mouse, tui_controller as tui_module
 from fuzzy_surgical.editor_controller import EditorController
+from fuzzy_surgical.selection import ClipboardResult
 from fuzzy_surgical.full_editor import FullEditor, TextBuffer
 from fuzzy_surgical.indexer import FileIndexer
 from fuzzy_surgical.mouse import ClickTracker, MouseEvent
@@ -419,6 +421,11 @@ def test_f10_opens_the_actions_menu_from_the_keyboard() -> None:
 
 def test_release_reports_the_selection_size(monkeypatch) -> None:
     monkeypatch.setattr(mouse, "_EXTENDED_TRACKING", True)
+    monkeypatch.setattr(
+        editor_mouse_module,
+        "copy_to_clipboard",
+        lambda text: ClipboardResult(True, f"Copied {len(text)} characters.", "pbpaste"),
+    )
     editor = FullEditor(FakeScreen(24, 80), None)
     editor.path = "/tmp/app.py"
     editor.buffer = TextBuffer("alpha zebracorn delta\nsecond line\n")
@@ -430,5 +437,27 @@ def test_release_reports_the_selection_size(monkeypatch) -> None:
 
     assert editor.selection.has_text
     assert "characters selected" not in editor.notice
+    assert "Copied" in editor.notice
+    assert editor.clipboard_text == editor.selection.text(editor.buffer.lines)
+    assert editor.clipboard_text
+    assert "Ctrl+V" in editor.notice
+
+
+def test_release_without_a_clipboard_still_reports_the_selection(monkeypatch) -> None:
+    monkeypatch.setattr(mouse, "_EXTENDED_TRACKING", True)
+    monkeypatch.setattr(
+        editor_mouse_module,
+        "copy_to_clipboard",
+        lambda text: ClipboardResult(False, "No clipboard tool found.", "missing"),
+    )
+    editor = FullEditor(FakeScreen(24, 80), None)
+    editor.path = "/tmp/app.py"
+    editor.buffer = TextBuffer("alpha zebracorn delta\nsecond line\n")
+    editor.scroll_row = 0
+
+    editor._handle_mouse(MouseEvent(6, 2, "click"))
+    editor._handle_mouse(MouseEvent(14, 2, "drag"))
+    editor._handle_mouse(MouseEvent(14, 2, "release"))
+
     assert "Selected" in editor.notice
     assert "Ctrl+C" in editor.notice

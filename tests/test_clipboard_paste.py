@@ -5,10 +5,12 @@ from __future__ import annotations
 import subprocess
 
 from fuzzy_surgical import editor_controller as line_editor_module
+from fuzzy_surgical import editor_mouse as editor_mouse_module
 from fuzzy_surgical import full_editor as editor_module
 from fuzzy_surgical import selection as selection_module
 from fuzzy_surgical.editor_controller import EditorController
 from fuzzy_surgical.full_editor import FullEditor, TextBuffer
+from fuzzy_surgical.mouse import MouseEvent
 from fuzzy_surgical.selection import ClipboardRead, ClipboardResult, read_clipboard
 
 
@@ -146,6 +148,72 @@ def test_paste_inserts_at_the_caret(monkeypatch) -> None:
     editor._paste_clipboard()
 
     assert editor.buffer.to_text() == "alpha beta!"
+
+
+def test_paste_falls_back_when_the_clipboard_holds_one_word(monkeypatch) -> None:
+    monkeypatch.setattr(
+        editor_module,
+        "read_clipboard",
+        lambda: ClipboardRead(True, "alpha", "", "pbpaste"),
+    )
+    editor = _editor("alpha beta gamma")
+    editor.buffer.set_cursor(0, len("alpha beta gamma"))
+    editor._remember_clipboard("alpha beta gamma")
+
+    editor._paste_clipboard()
+
+    assert editor.buffer.to_text() == "alpha beta gammaalpha beta gamma"
+    assert "app clipboard" in editor.notice
+
+
+def test_paste_still_prefers_a_new_external_clipboard(monkeypatch) -> None:
+    monkeypatch.setattr(
+        editor_module,
+        "read_clipboard",
+        lambda: ClipboardRead(True, "external text", "", "pbpaste"),
+    )
+    editor = _editor("alpha beta gamma")
+    editor.buffer.set_cursor(0, len("alpha beta gamma"))
+    editor._remember_clipboard("alpha beta gamma")
+
+    editor._paste_clipboard()
+
+    assert editor.buffer.to_text() == "alpha beta gammaexternal text"
+
+
+def test_paste_uses_the_app_copy_when_the_clipboard_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        editor_module,
+        "read_clipboard",
+        lambda: ClipboardRead(False, "", "No clipboard tool found.", "missing"),
+    )
+    editor = _editor("alpha beta gamma")
+    editor.buffer.set_cursor(0, len("alpha beta gamma"))
+    editor._remember_clipboard("alpha beta gamma")
+
+    editor._paste_clipboard()
+
+    assert editor.buffer.to_text() == "alpha beta gammaalpha beta gamma"
+    assert editor.error == ""
+
+
+def test_mouse_release_copies_the_whole_selection(monkeypatch) -> None:
+    copied = []
+    monkeypatch.setattr(
+        editor_mouse_module,
+        "copy_to_clipboard",
+        lambda text: copied.append(text)
+        or ClipboardResult(True, f"Copied {len(text)} characters with pbcopy.", "pbpaste"),
+    )
+    editor = _editor("alpha beta gamma")
+    editor.selection.start(0, 0)
+    editor.selection.extend(0, len("alpha beta"))
+
+    editor._handle_mouse(MouseEvent(0, 0, "release"))
+
+    assert copied == ["alpha beta"]
+    assert editor.clipboard_text == "alpha beta"
+    assert "Copied 10 characters" in editor.notice
 
 
 def test_typing_replaces_the_selection() -> None:
