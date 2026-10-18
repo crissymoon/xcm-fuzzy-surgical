@@ -93,3 +93,76 @@ class JumpPrompt:
             f"Line {number}: Enter jumps there, Up or Down {number} lines, "
             "Esc cancels."
         )
+
+
+class EditorJumpMixin:
+    """Jump actions for the whole-file editor."""
+
+    def _open_jump_prompt(self) -> None:
+        """Open the one-row prompt that jumps by a line or a distance."""
+        self.jump.open()
+        self.error = ""
+        self.notice = ""
+        self.completion.close()
+        self.diagnostics_panel.close()
+
+    def _handle_jump_key(self, key) -> None:
+        """Interpret a key while the jump prompt is open."""
+        action = self.jump.press(key)
+        if action == CANCEL:
+            self.jump.close()
+            self.notice = "Jump cancelled."
+            return
+        if action in (TYPED, IGNORED):
+            return
+        number = self.jump.value
+        if number < 1:
+            self.notice = "Type a line number first."
+            return
+        if action == UP:
+            self._jump_lines(-number, "up")
+        elif action == DOWN:
+            self._jump_lines(number, "down")
+        else:
+            self._jump_absolute(number)
+
+    def _jump_lines(self, delta: int, direction: str) -> None:
+        """Move the caret a number of logical lines, matching the gutter."""
+        self.jump.close()
+        self.error = ""
+        self.notice = ""
+        before = self.buffer.cursor_row
+        target = max(0, min(self.buffer.line_count - 1, before + delta))
+        self.buffer.set_cursor(target, self.buffer.cursor_col)
+        self.selection.clear()
+        self.completion.close()
+        self._pending_center = True
+        moved = abs(target - before)
+        if moved == 0:
+            self.notice = (
+                "Already at the first line."
+                if direction == "up"
+                else "Already at the last line."
+            )
+            return
+        plural = "" if moved == 1 else "s"
+        self.notice = (
+            f"Jumped {moved} line{plural} {direction} to line {target + 1}."
+        )
+
+    def _jump_absolute(self, number: int) -> None:
+        """Move the caret to a one-based line number, clamped to the file."""
+        self.jump.close()
+        self.error = ""
+        self.buffer.goto_line(number)
+        self.buffer.cursor_col = 0
+        self.selection.clear()
+        self.completion.close()
+        self._pending_center = True
+        landed = self.buffer.cursor_row + 1
+        if landed == number:
+            self.notice = f"Jumped to line {landed}."
+        else:
+            self.notice = (
+                f"Line {number} is past the end, so line {landed} is the last."
+            )
