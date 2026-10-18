@@ -11,6 +11,7 @@ import curses.ascii
 
 from fuzzy_surgical import __version__
 from fuzzy_surgical.colors import Theme
+from fuzzy_surgical.devbox import DevBoxSession, load_devbox_config
 from fuzzy_surgical.directory_picker import DirectoryPicker
 from fuzzy_surgical.editor_controller import EditorController
 from fuzzy_surgical.file_browser import FileBrowser
@@ -75,12 +76,19 @@ class TUIController:
         ignore_dirs: Optional[Sequence[str]] = None,
         extensions: Optional[Sequence[str]] = None,
         history: Optional[SnapshotStore] = None,
+        devbox_config: Optional[str] = None,
+        enable_lsp: bool = True,
+        enable_linters: bool = True,
     ) -> None:
         self.indexer = indexer
         self.root_dir = root_dir
         self.ignore_dirs = list(ignore_dirs) if ignore_dirs is not None else None
         self.extensions = list(extensions) if extensions is not None else None
         self.history = history
+        self.devbox_config = devbox_config
+        self.enable_lsp = enable_lsp
+        self.enable_linters = enable_linters
+        self.devbox: Optional[DevBoxSession] = None
 
         self.matcher = FuzzyMatcher()
         self.jump_resolver = LineJumpResolver()
@@ -146,12 +154,39 @@ class TUIController:
             self._load_directory(root)
             self._search_loop()
         finally:
+            self._close_devbox()
             disable_mouse()
 
     def _load_directory(self, path: Path) -> None:
         self.root_dir = path
         self.query = ""
+        self._close_devbox()
+        self.devbox = self._build_devbox(path)
         self._reload_index()
+
+    def _build_devbox(self, path: Path) -> Optional[DevBoxSession]:
+        if not self.enable_lsp and not self.enable_linters:
+            return None
+        try:
+            config = load_devbox_config(path, self.devbox_config)
+            return DevBoxSession(
+                path,
+                config=config,
+                enable_lsp=self.enable_lsp,
+                enable_linters=self.enable_linters,
+            )
+        except Exception as exc:
+            self.load_error = f"Dev box disabled: {exc}"
+            return None
+
+    def _close_devbox(self) -> None:
+        session = self.devbox
+        self.devbox = None
+        if session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
 
     def _reload_index(self) -> None:
         """Rebuild the index for the current root, keeping the query."""
@@ -743,6 +778,7 @@ class TUIController:
                 history=self.history,
                 ignore_names=self.ignore_dirs,
                 extensions=self.extensions,
+                devbox=self.devbox,
             ).run()
         except Exception as exc:  # the browser must never take down the search
             self._set_notice(f"File browser failed: {exc}", 8.0)
@@ -770,7 +806,9 @@ class TUIController:
             pass
         self.file_lines = self.indexer.file_lines
         try:
-            saved = FullEditor(self.stdscr, self.theme, self.history).edit(Path(file_path))
+            saved = FullEditor(
+                self.stdscr, self.theme, self.history, devbox=self.devbox
+            ).edit(Path(file_path))
         except EditorOpenError as exc:
             self._update_results(preserve=preserve)
             self._set_notice(str(exc), 8.0)

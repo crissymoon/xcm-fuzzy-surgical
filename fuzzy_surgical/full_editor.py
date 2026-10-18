@@ -12,17 +12,21 @@ the user just found with the fuzzy search.
 from __future__ import annotations
 
 import os
-import stat
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 import curses
 import curses.ascii
 
 from fuzzy_surgical.colors import Theme
+from fuzzy_surgical.completion_ui import CompletionPopup
+from fuzzy_surgical.devbox import DevBoxSession
+from fuzzy_surgical.diagnostics_ui import DiagnosticPanel
 from fuzzy_surgical.file_writer import FileWriteError, WriteResult, file_digest, write_text
 from fuzzy_surgical.history import SnapshotStore
+from fuzzy_surgical.lsp.completion import completion_prefix
+from fuzzy_surgical.lsp.protocol import utf16_column
 from fuzzy_surgical.mouse import (
     MOUSE_KEY,
     SCROLL_LINES,
@@ -39,6 +43,13 @@ from fuzzy_surgical.renderer import (
     shorten,
     window_size,
 )
+from fuzzy_surgical.text_buffer import (
+    EditorOpenError,
+    TextBuffer,
+    detect_newline,
+    normalize_newlines,
+    read_editor_file,
+)
 from fuzzy_surgical.utils import (
     display_path,
     is_backspace,
@@ -47,263 +58,24 @@ from fuzzy_surgical.utils import (
     read_key,
 )
 
-MAX_EDITOR_BYTES = 8_000_000
-MAX_EDITOR_LINES = 200_000
-MAX_UNDO_STEPS = 500
-COALESCE_SECONDS = 0.6
-
+CTRL_SPACE = 0
+CTRL_L = 12
+CTRL_N = 14
 CTRL_S = 19
 CTRL_W = 23
 CTRL_Y = 25
 CTRL_Z = 26
 TAB = 9
+COMPLETION_DELAY = 0.18
 
-
-class EditorOpenError(Exception):
-    """Raised when a file cannot be opened safely in the full editor."""
-
-
-def detect_newline(text: str) -> str:
-    """Return the dominant line ending without guessing on empty text."""
-    crlf = text.count("\r\n")
-    cr = text.count("\r") - crlf
-    lf = text.count("\n") - crlf
-    if crlf and crlf >= lf and crlf >= cr:
-        return "\r\n"
-    if cr and cr > lf:
-        return "\r"
-    return "\n"
-
-
-def normalize_newlines(text: str) -> str:
-    return text.replace("\r\n", "\n").replace("\r", "\n")
-
-
-def read_editor_file(file_path: str) -> str:
-    """Read a text file with the editor caps, raising EditorOpenError."""
-    try:
-        info = os.stat(file_path)
-    except OSError as exc:
-        raise EditorOpenError("Could not read the file: " + (exc.strerror or str(exc))) from exc
-    if not stat.S_ISREG(info.st_mode):
-        raise EditorOpenError("That path is not a regular file.")
-    if info.st_size > MAX_EDITOR_BYTES:
-        raise EditorOpenError(
-            f"File is larger than {MAX_EDITOR_BYTES // 1_000_000} MB. Edit it outside the TUI."
-        )
-    try:
-        with open(file_path, "rb") as handle:
-            data = handle.read(MAX_EDITOR_BYTES + 1)
-    except OSError as exc:
-        raise EditorOpenError("Could not read the file: " + (exc.strerror or str(exc))) from exc
-    if b"\x00" in data[:8192]:
-        raise EditorOpenError("That looks like a binary file, so it was not opened.")
-    text = data.decode("utf-8", "surrogateescape")
-    if text.count("\n") > MAX_EDITOR_LINES:
-        raise EditorOpenError("File has too many lines for the built-in editor.")
-    return text
-
-
-class TextBuffer:
-    """Editable lines with cursor movement, undo and redo."""
-
-    def __init__(self, text: str = "") -> None:
-        self.newline = detect_newline(text)
-        self.trailing_newline = False
-        self.lines: List[str] = [""]
-        self.cursor_row = 0
-        self.cursor_col = 0
-        self.original_text = ""
-        self.undo_stack: List[Tuple[List[str], bool, int, int]] = []
-        self.redo_stack: List[Tuple[List[str], bool, int, int]] = []
-        self._last_edit = ""
-        self._last_edit_at = 0.0
-        self._reset(text)
-
-    def _reset(self, text: str) -> None:
-        normalized = normalize_newlines(text)
-        self.trailing_newline = normalized.endswith("\n")
-        body = normalized[:-1] if self.trailing_newline else normalized
-        self.lines = body.split("\n")
-        if not self.lines:
-            self.lines = [""]
-        self.cursor_row = 0
-        self.cursor_col = 0
-        self.original_text = self.to_text()
-
-    def to_text(self) -> str:
-        body = self.newline.join(self.lines)
-        if self.trailing_newline:
-            return body + self.newline
-        return body
-
-    @property
-    def dirty(self) -> bool:
-        return self.to_text() != self.original_text
-
-    @property
-    def line_count(self) -> int:
-        return len(self.lines)
-
-    def mark_saved(self) -> None:
-        self.original_text = self.to_text()
-
-    def _clamp(self) -> None:
-        if not self.lines:
-            self.lines = [""]
-        self.cursor_row = max(0, min(self.cursor_row, len(self.lines) - 1))
-        self.cursor_col = max(0, min(self.cursor_col, len(self.lines[self.cursor_row])))
-
-    def _state(self) -> Tuple[List[str], bool, int, int]:
-        return (list(self.lines), self.trailing_newline, self.cursor_row, self.cursor_col)
-
-    def _restore(self, state: Tuple[List[str], bool, int, int]) -> None:
-        self.lines, self.trailing_newline, self.cursor_row, self.cursor_col = state
-        self._clamp()
-        self._last_edit = ""
-
-    def _begin_edit(self, kind: str) -> None:
-        now = time.monotonic()
-        coalesce = (
-            kind in ("insert", "backspace", "delete")
-            and kind == self._last_edit
-            and now - self._last_edit_at <= COALESCE_SECONDS
-            and bool(self.undo_stack)
-        )
-        if not coalesce:
-            self.undo_stack.append(self._state())
-            if len(self.undo_stack) > MAX_UNDO_STEPS:
-                self.undo_stack.pop(0)
-            self.redo_stack.clear()
-        self._last_edit = kind
-        self._last_edit_at = now
-
-    def insert_text(self, text: str) -> None:
-        if not text:
-            return
-        text = normalize_newlines(text)
-        self._begin_edit("insert")
-        row = self.cursor_row
-        line = self.lines[row]
-        before = line[: self.cursor_col]
-        after = line[self.cursor_col :]
-        parts = text.split("\n")
-        if len(parts) == 1:
-            self.lines[row] = before + text + after
-            self.cursor_col += len(text)
-            return
-        replacement = [before + parts[0]]
-        replacement.extend(parts[1:-1])
-        replacement.append(parts[-1] + after)
-        self.lines[row : row + 1] = replacement
-        self.cursor_row = row + len(parts) - 1
-        self.cursor_col = len(parts[-1])
-
-    def insert_newline(self) -> None:
-        self._begin_edit("newline")
-        row = self.cursor_row
-        line = self.lines[row]
-        before = line[: self.cursor_col]
-        after = line[self.cursor_col :]
-        self.lines[row : row + 1] = [before, after]
-        self.cursor_row = row + 1
-        self.cursor_col = 0
-
-    def backspace(self) -> None:
-        if self.cursor_col > 0:
-            self._begin_edit("backspace")
-            row = self.cursor_row
-            self.lines[row] = (
-                self.lines[row][: self.cursor_col - 1] + self.lines[row][self.cursor_col :]
-            )
-            self.cursor_col -= 1
-        elif self.cursor_row > 0:
-            self._begin_edit("backspace")
-            previous = self.lines[self.cursor_row - 1]
-            current = self.lines.pop(self.cursor_row)
-            self.cursor_row -= 1
-            self.cursor_col = len(previous)
-            self.lines[self.cursor_row] = previous + current
-
-    def delete(self) -> None:
-        line = self.lines[self.cursor_row]
-        if self.cursor_col < len(line):
-            self._begin_edit("delete")
-            row = self.cursor_row
-            self.lines[row] = line[: self.cursor_col] + line[self.cursor_col + 1 :]
-        elif self.cursor_row < len(self.lines) - 1:
-            self._begin_edit("delete")
-            row = self.cursor_row
-            self.lines[row] = line + self.lines[row + 1]
-            del self.lines[row + 1]
-
-    def move_left(self) -> None:
-        if self.cursor_col > 0:
-            self.cursor_col -= 1
-        elif self.cursor_row > 0:
-            self.cursor_row -= 1
-            self.cursor_col = len(self.lines[self.cursor_row])
-
-    def move_right(self) -> None:
-        line = self.lines[self.cursor_row]
-        if self.cursor_col < len(line):
-            self.cursor_col += 1
-        elif self.cursor_row < len(self.lines) - 1:
-            self.cursor_row += 1
-            self.cursor_col = 0
-
-    def move_up(self) -> None:
-        if self.cursor_row > 0:
-            self.cursor_row -= 1
-            self._clamp()
-
-    def move_down(self) -> None:
-        if self.cursor_row < len(self.lines) - 1:
-            self.cursor_row += 1
-            self._clamp()
-
-    def move_home(self) -> None:
-        self.cursor_col = 0
-
-    def move_end(self) -> None:
-        self.cursor_col = len(self.lines[self.cursor_row])
-
-    def move_page(self, delta: int) -> None:
-        self.cursor_row = max(0, min(len(self.lines) - 1, self.cursor_row + delta))
-        self._clamp()
-
-    def goto_line(self, line_number: int) -> None:
-        self.cursor_row = max(0, min(len(self.lines) - 1, line_number - 1))
-        self._clamp()
-
-    def set_cursor(self, row: int, column: int) -> None:
-        """Place the cursor without touching text or the undo history."""
-        self.cursor_row = max(0, min(len(self.lines) - 1, row))
-        self.cursor_col = max(0, min(len(self.lines[self.cursor_row]), column))
-
-    def undo(self) -> bool:
-        if not self.undo_stack:
-            return False
-        self.redo_stack.append(self._state())
-        self._restore(self.undo_stack.pop())
-        return True
-
-    def redo(self) -> bool:
-        if not self.redo_stack:
-            return False
-        self.undo_stack.append(self._state())
-        self._restore(self.redo_stack.pop())
-        return True
-
-    def replace_text(self, text: str) -> None:
-        """Load text as an undoable change, keeping the saved baseline."""
-        self._begin_edit("restore")
-        normalized = normalize_newlines(text)
-        self.trailing_newline = normalized.endswith("\n")
-        body = normalized[:-1] if self.trailing_newline else normalized
-        self.lines = body.split("\n") or [""]
-        self.cursor_row = 0
-        self.cursor_col = 0
+__all__ = [
+    "EditorOpenError",
+    "FullEditor",
+    "TextBuffer",
+    "detect_newline",
+    "normalize_newlines",
+    "read_editor_file",
+]
 
 
 class FullEditor:
@@ -314,10 +86,12 @@ class FullEditor:
         stdscr,
         theme: Optional[Theme] = None,
         history: Optional[SnapshotStore] = None,
+        devbox: Optional[DevBoxSession] = None,
     ) -> None:
         self.stdscr = stdscr
         self.theme = theme if theme is not None else Theme()
         self.history = history
+        self.devbox = devbox
         self.path = ""
         self.buffer = TextBuffer()
         self.disk_digest = ""
@@ -335,6 +109,11 @@ class FullEditor:
         self.history_index = 0
         self.history_scroll = 0
         self.click_tracker = ClickTracker()
+        self.completion = CompletionPopup()
+        self.diagnostics_panel = DiagnosticPanel()
+        self.diagnostics = []
+        self.assist_status = ""
+        self._completion_due_at = 0.0
 
     def edit(self, file_path: Path) -> bool:
         """Open the file and return True when at least one save happened."""
@@ -348,42 +127,193 @@ class FullEditor:
         self.notice = ""
         self.saved_any = False
         self.last_save = None
+        self.completion = CompletionPopup()
+        self.diagnostics_panel = DiagnosticPanel()
+        self.diagnostics = []
+        self._completion_due_at = 0.0
+        if self.devbox is not None:
+            self.devbox.open_document(self.path, self.buffer.to_text())
         try:
             curses.curs_set(1)
         except curses.error:
             pass
 
-        while True:
+        self._set_input_timeout(120)
+        try:
             self._draw()
-            key = read_key(self.stdscr)
-            if key is None:
-                continue
-            if key == curses.KEY_RESIZE:
-                continue
-            if key == MOUSE_KEY:
-                event = read_mouse(self.stdscr)
-                if event is not None:
-                    self._handle_mouse(event)
-                continue
-            if self.mode == "edit":
-                if self._handle_edit_key(key):
-                    return self.saved_any
-            elif self.mode == "saved":
-                self.mode = "edit"
-            elif self.mode == "discard":
-                if key in ("s", "S"):
-                    self._save()
-                elif key in ("d", "D"):
-                    return self.saved_any
-                else:
+            while True:
+                key = read_key(self.stdscr)
+                if key is None or key == -1:
+                    if self._poll_assist() or self._completion_due():
+                        self._draw()
+                    continue
+                if key == curses.KEY_RESIZE:
+                    self._draw()
+                    continue
+                if key == MOUSE_KEY:
+                    event = read_mouse(self.stdscr)
+                    if event is not None:
+                        self._handle_mouse(event)
+                    self._draw()
+                    continue
+                finished = False
+                if self.mode == "edit":
+                    finished = self._handle_edit_key(key)
+                elif self.mode == "saved":
                     self.mode = "edit"
-            elif self.mode == "history":
-                self._handle_history_key(key)
-            elif self.mode == "help":
-                self.mode = "edit"
+                elif self.mode == "discard":
+                    if key in ("s", "S"):
+                        self._save()
+                    elif key in ("d", "D"):
+                        finished = True
+                    else:
+                        self.mode = "edit"
+                elif self.mode == "history":
+                    self._handle_history_key(key)
+                elif self.mode == "help":
+                    self.mode = "edit"
+                if finished:
+                    return self.saved_any
+                self._draw()
+        finally:
+            self._set_input_timeout(-1)
+            self.completion.close()
+            if self.devbox is not None:
+                self.devbox.close_document()
+
+    def _set_input_timeout(self, milliseconds: int) -> None:
+        if self.stdscr is None:
+            return
+        try:
+            self.stdscr.timeout(milliseconds)
+        except (AttributeError, curses.error):
+            pass
+
+    def _poll_assist(self) -> bool:
+        """Apply background dev box events, returning True when drawing changed."""
+        if self.devbox is None:
+            return False
+        changed = False
+        for event in self.devbox.poll():
+            kind = event[0] if event else ""
+            if kind == "completions":
+                sequence = int(event[1])
+                if self.completion.set_result(sequence, event[2]):
+                    row = self.buffer.cursor_row
+                    line = self.buffer.lines[row]
+                    start, prefix = completion_prefix(line, self.buffer.cursor_col)
+                    self.completion.prefix_start = start
+                    self.completion.refine(prefix)
+                    changed = True
+            elif kind == "diagnostics":
+                self.diagnostics = [
+                    item
+                    for item in event[2]
+                    if os.path.normcase(os.path.abspath(item.path))
+                    == os.path.normcase(self.path)
+                ]
+                self.diagnostics_panel.set_items(self.diagnostics)
+                changed = True
+            elif kind == "status":
+                self.assist_status = str(event[1])
+                changed = True
+        return changed
+
+    def _completion_due(self) -> bool:
+        if self.devbox is None or self._completion_due_at <= 0:
+            return False
+        if time.monotonic() < self._completion_due_at:
+            return False
+        self._completion_due_at = 0.0
+        if self.completion.requested and self.completion.visible:
+            return False
+        self._request_completion()
+        return True
+
+    def _request_completion(self) -> None:
+        if self.devbox is None:
+            return
+        row = self.buffer.cursor_row
+        line = self.buffer.lines[row]
+        start, prefix = completion_prefix(line, self.buffer.cursor_col)
+        sequence = self.devbox.request_completion(
+            self.buffer.to_text(), row, utf16_column(line, self.buffer.cursor_col)
+        )
+        if sequence:
+            self.completion.open(start, prefix, sequence)
+
+    def _after_edit(self) -> None:
+        if self.devbox is None:
+            return
+        row = self.buffer.cursor_row
+        line = self.buffer.lines[row]
+        start, prefix = completion_prefix(line, self.buffer.cursor_col)
+        if self.completion.requested and self.completion.visible:
+            self.completion.prefix_start = start
+            self.completion.refine(prefix)
+        if len(prefix) < 2:
+            return
+        self._completion_due_at = time.monotonic() + COMPLETION_DELAY
+
+    def _accept_completion(self) -> None:
+        item = self.completion.selected_item()
+        if item is None:
+            return
+        row = self.buffer.cursor_row
+        start = min(self.completion.prefix_start, self.buffer.cursor_col)
+        self.buffer.replace_span(row, start, self.buffer.cursor_col, item.insert_text)
+        self.completion.close()
+        self._completion_due_at = 0.0
+        self.error = ""
+
+    def _jump_to_diagnostic(self) -> None:
+        item = self.diagnostics_panel.selected_diagnostic()
+        if item is None:
+            return
+        self.buffer.goto_line(item.line)
+        self.diagnostics_panel.close()
+        self._after_cursor_move()
+        self.notice = f"Line {item.line}: {item.message[:60]}"
 
     def _handle_edit_key(self, key) -> bool:
         self.error = ""
+        if self.completion.visible:
+            if key == curses.KEY_UP:
+                self.completion.move(-1)
+                return False
+            if key == curses.KEY_DOWN:
+                self.completion.move(1)
+                return False
+            if is_enter(key) or key == TAB:
+                self._accept_completion()
+                return False
+            if key == curses.ascii.ESC:
+                self.completion.close()
+                return False
+        if self.diagnostics_panel.visible:
+            if key == curses.KEY_UP:
+                self.diagnostics_panel.move(-1)
+                return False
+            if key == curses.KEY_DOWN:
+                self.diagnostics_panel.move(1)
+                return False
+            if is_enter(key):
+                self._jump_to_diagnostic()
+                return False
+            if key in (curses.ascii.ESC, curses.KEY_F9, CTRL_L):
+                self.diagnostics_panel.close()
+                return False
+
+        if key in (CTRL_SPACE, CTRL_N):
+            self._request_completion()
+            return False
+        if key in (curses.KEY_F9, CTRL_L):
+            self.diagnostics_panel.toggle()
+            if not self.diagnostics_panel.visible and not self.diagnostics:
+                self.notice = "No issues reported for this file yet."
+            return False
+
+        edited = False
         if key == curses.ascii.ESC:
             if self.buffer.dirty:
                 self.mode = "discard"
@@ -395,43 +325,59 @@ class FullEditor:
             self._open_history()
         elif key == curses.KEY_F8:
             self._reload()
+            self._after_edit()
         elif key == curses.KEY_F1:
             self.mode = "help"
         elif key == CTRL_Z:
             self.buffer.undo()
             self._after_cursor_move()
+            self._after_edit()
         elif key == CTRL_Y:
             self.buffer.redo()
             self._after_cursor_move()
+            self._after_edit()
         elif is_enter(key):
             self.buffer.insert_newline()
             self._after_cursor_move()
+            edited = True
         elif key == curses.KEY_UP:
             self.buffer.move_up()
         elif key == curses.KEY_DOWN:
             self.buffer.move_down()
         elif key == curses.KEY_LEFT:
             self.buffer.move_left()
+            self.completion.close()
         elif key == curses.KEY_RIGHT:
             self.buffer.move_right()
+            self.completion.close()
         elif key == curses.KEY_HOME:
             self.buffer.move_home()
+            self.completion.close()
         elif key == curses.KEY_END:
             self.buffer.move_end()
+            self.completion.close()
         elif key == curses.KEY_PPAGE:
             self.buffer.move_page(-self._page_size())
+            self.completion.close()
         elif key == curses.KEY_NPAGE:
             self.buffer.move_page(self._page_size())
+            self.completion.close()
         elif key == curses.KEY_DC:
             self.buffer.delete()
+            edited = True
         elif is_backspace(key):
             self.buffer.backspace()
+            edited = True
         elif key == TAB:
             self.buffer.insert_text("    ")
+            edited = True
         else:
             char = printable_char(key)
             if char:
                 self.buffer.insert_text(char)
+                edited = True
+        if edited:
+            self._after_edit()
         return False
 
     def _handle_mouse(self, event: MouseEvent) -> None:
@@ -557,6 +503,9 @@ class FullEditor:
         self.disk_digest = result.digest
         self.last_save = result
         self.saved_any = True
+        self.completion.close()
+        if self.devbox is not None:
+            self.devbox.document_saved(self.path, self.buffer.to_text())
         self.saved_line = self.buffer.cursor_row + 1
         self.saved_proof = self._read_disk_line(self.saved_line)
         if history_note:
@@ -683,6 +632,10 @@ class FullEditor:
         self._draw_header(height, width)
         if self.mode == "edit":
             self._draw_edit(height, width)
+            if self.diagnostics_panel.visible:
+                self.diagnostics_panel.draw(
+                    self.stdscr, self.theme, status=self.assist_status
+                )
         elif self.mode == "saved":
             self._draw_saved(height, width)
         elif self.mode == "discard":
@@ -696,8 +649,9 @@ class FullEditor:
 
     def _draw_header(self, height: int, width: int) -> None:
         marker = " *" if self.buffer.dirty else ""
-        label = shorten(display_path(Path(self.path)), max(10, width - 28))
-        title = f"Editing {label} ({self.buffer.line_count} lines){marker}"
+        issues = f" !{len(self.diagnostics)}" if self.diagnostics else ""
+        label = shorten(display_path(Path(self.path)), max(10, width - 34))
+        title = f"Editing {label} ({self.buffer.line_count} lines){issues}{marker}"
         safe_addstr(
             self.stdscr,
             0,
@@ -717,7 +671,8 @@ class FullEditor:
             self.stdscr,
             1,
             0,
-            "Ctrl+S save  F2 save  F6 snapshots  F8 reload  Ctrl+Z undo  F1 help"[: width - 1],
+            "Ctrl+S save  F2 save  F6 snapshots  F8 reload  "
+            "^Space complete  F9 issues  F1 help"[: width - 1],
             self.theme.attr("ui.dim", dim=True),
         )
 
@@ -795,9 +750,21 @@ class FullEditor:
                 self.theme.attr("ui.success"),
             )
 
+        if self.completion.visible:
+            self.completion.draw(
+                self.stdscr,
+                self.theme,
+                caret_row,
+                caret_col,
+                max_rows=max(1, height - 5),
+                max_width=max(24, width - gutter_width - 2),
+            )
+
     def _draw_status(self, height: int, width: int) -> None:
         state = "modified" if self.buffer.dirty else "saved"
         left = f" Esc back  {state} "
+        if self.assist_status:
+            left += f" {self.assist_status} "
         right = f" {self.buffer.cursor_row + 1}/{self.buffer.line_count} "
         if width < 64:
             left = " Ctrl+S save  Esc back "
@@ -922,6 +889,13 @@ class FullEditor:
             "  Tab            insert four spaces",
             "  Ctrl+Z         undo",
             "  Ctrl+Y         redo",
+            "",
+            "Dev box (language server and linters)",
+            "  Ctrl+Space     request completions now (Ctrl+N also works)",
+            "  typing         suggestions appear after two characters",
+            "  Up / Down      choose a suggestion, Enter or Tab inserts",
+            "  Esc            close the suggestion list without inserting",
+            "  F9 / Ctrl+L    show issues, Enter jumps to the line",
             "",
             "Saving and safety",
             "  Ctrl+S / F2    write and verify the disk copy",

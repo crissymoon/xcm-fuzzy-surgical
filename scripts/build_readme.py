@@ -195,6 +195,34 @@ def _render_controls(controls: List[Dict[str, Any]]) -> List[str]:
     return lines
 
 
+def _render_devbox(section: Dict[str, Any]) -> List[str]:
+    if not section:
+        return []
+    lines: List[str] = [
+        "## Language server and dev box",
+        "",
+        str(section.get("intro", "")).strip(),
+        "",
+    ]
+    if section.get("example"):
+        if section.get("example_path"):
+            lines.extend([f"`{section['example_path']}`", ""])
+        lines.extend([_code_block(section.get("language", "json"), section["example"]), ""])
+    if section.get("servers"):
+        lines.extend(
+            [
+                _table(
+                    ["Language", "Server", "Linter"],
+                    section["servers"],
+                ),
+                "",
+            ]
+        )
+    lines.extend(_bullets(section.get("notes", [])).splitlines())
+    lines.append("")
+    return lines
+
+
 def _render_safety(section: Dict[str, Any]) -> List[str]:
     lines: List[str] = [
         "## Safety and limits",
@@ -291,6 +319,7 @@ def render(metadata: Dict[str, Any], version: str) -> str:
     lines.extend(_render_install(metadata["install"]))
     lines.extend(_render_usage(metadata["quickstart"], metadata["cli"]))
     lines.extend(_render_controls(metadata["controls"]))
+    lines.extend(_render_devbox(metadata.get("devbox", {})))
     lines.extend(_render_safety(metadata["safety"]))
     lines.extend(_render_development(metadata["development"]))
     lines.extend(_render_requirements(metadata["requirements"]))

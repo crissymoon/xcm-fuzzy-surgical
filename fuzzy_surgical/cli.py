@@ -70,6 +70,25 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Snapshots kept per file (default: {DEFAULT_PER_FILE_LIMIT})",
     )
     parser.add_argument(
+        "--devbox",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Dev box JSON file or project directory. Defaults to "
+            ".fuzzy-surgical/devbox.json inside the search root."
+        ),
+    )
+    parser.add_argument(
+        "--no-lsp",
+        action="store_true",
+        help="Disable language server completion and diagnostics",
+    )
+    parser.add_argument(
+        "--no-linters",
+        action="store_true",
+        help="Disable background linter runs",
+    )
+    parser.add_argument(
         "--max-files",
         type=int,
         default=IndexLimits.max_files,
@@ -163,6 +182,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         ignore_dirs=args.ignore,
         extensions=args.extensions,
         history=history,
+        devbox_config=args.devbox,
+        enable_lsp=not args.no_lsp,
+        enable_linters=not args.no_linters,
     )
 
     start_dir = safe_start_directory(Path.cwd()) if root is None else root

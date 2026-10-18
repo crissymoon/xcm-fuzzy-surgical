@@ -6,9 +6,9 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://github.com/crissymoon/xcm-fuzzy-surgical)
 [![Website](https://img.shields.io/badge/website-xcaliburmoon.net-black.svg)](https://xcaliburmoon.net/)
 
-A terminal fuzzy finder with syntax highlighted results, surgical line replacement and a file browser.
+A terminal fuzzy finder with syntax highlighted results, surgical line replacement, a file browser and LSP completion.
 
-FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, writes an edited line to disk on Enter, and then shows the text read back from the file. F3 opens a safe file browser, F4 opens the selected file in a whole-file editor, and every save can store the previous version in a local SQLite database for recovery.
+FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, writes an edited line to disk on Enter, and then shows the text read back from the file. F3 opens a safe file browser, F4 opens the selected file in a whole-file editor, and every save can store the previous version in a local SQLite database for recovery. The editor speaks the Language Server Protocol for completion and diagnostics, and an optional dev box file adds project linters.
 
 Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 
@@ -41,6 +41,12 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - F4 opens the selected file in a whole-file editor with a cursor, undo and redo, page scrolling and syntax colors
 - Every line or whole-file save first stores the previous version in a local SQLite database, and F6 lists snapshots to restore
 - Snapshots stay in the user data directory instead of beside the source tree, and --no-history turns them off
+- LSP completion in the full editor through any installed server: pylsp, pyright, typescript-language-server, gopls, rust-analyzer, clangd, bash-language-server, lua-language-server, solargraph or intelephense
+- Ctrl+Space requests completions, typing identifier characters suggests after a short delay, and Enter or Tab inserts a plain text item
+- Linters run in a separate worker after open and save: ruff, flake8, pyflakes, eslint, shellcheck, ruby -c, php -l and gofmt
+- F9 lists merged language server and linter diagnostics, and Enter jumps to the reported line
+- Optional .fuzzy-surgical/devbox.json adds servers, linters, timeouts and initialization options per project
+- Missing language servers and linters are reported in the status bar and never block editing or saving
 - Single file JSON metadata that regenerates this README through a checked in script
 
 ## Installation
@@ -116,6 +122,9 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | --no-history | none | Do not store SQLite snapshots of edited files. |
 | --history-db | PATH | Use a different SQLite history database. |
 | --history-limit | INT | Snapshots kept per file. Default 25. |
+| --devbox | PATH | Dev box JSON file or project directory. Defaults to .fuzzy-surgical/devbox.json in the search root. |
+| --no-lsp | none | Disable language server completion and diagnostics. |
+| --no-linters | none | Disable background linter runs. |
 | --version | none | Print the installed version and exit. |
 | --max-files | INT | Maximum number of files to index. Default 8000. |
 | --max-file-size | INT | Maximum bytes read per file. Default 1000000. |
@@ -184,6 +193,9 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Backspace / Delete | Delete backwards or forwards, joining lines at the edges. |
 | Tab | Insert four spaces. |
 | Ctrl+Z / Ctrl+Y | Undo and redo. |
+| Ctrl+Space | Request completions from the language server. Ctrl+N also works. Typing two identifier characters suggests automatically. |
+| Up / Down (completions) | Choose a suggestion. Enter or Tab inserts it, Esc closes the list. |
+| F9 | Show merged language server and linter issues. Ctrl+L also works. Up / Down select, Enter jumps, F9 closes. |
 | Ctrl+S / F2 | Write and verify the disk copy, after storing the previous version in SQLite. |
 | F6 | List SQLite snapshots. Enter loads one into the buffer as unsaved text. |
 | F8 | Reload the file from disk. |
@@ -205,6 +217,55 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Ctrl+S | Save immediately. Ctrl+W is an alias when the terminal captures Ctrl+S for flow control. |
 | Esc | Ask before discarding unsaved changes. In that prompt s saves, d discards and Esc keeps editing. |
 | F1 | Show help. |
+
+## Language server and dev box
+
+The full editor can ask a language server for completions and show linter diagnostics. Both are optional and auto-detected from PATH, so a missing tool never blocks editing. Add .fuzzy-surgical/devbox.json to the project root for per-project commands, timeouts or initialization options.
+
+`.fuzzy-surgical/devbox.json`
+
+```json
+{
+  "lsp": {
+    "enabled": true,
+    "timeout": 5,
+    "initialize_timeout": 12,
+    "options": {},
+    "servers": {
+      "python": [["pylsp"]],
+      ".go": [["gopls", "serve"]]
+    }
+  },
+  "linters": {
+    "enabled": true,
+    "timeout": 8,
+    "commands": {
+      ".py": [["ruff", "check", "--output-format=concise", "{file}"]],
+      ".js": [["eslint", "--format", "unix", "{file}"]]
+    }
+  }
+}
+```
+
+| Language | Server | Linter |
+| --- | --- | --- |
+| Python | pylsp, pyright-langserver, basedpyright-langserver | ruff, flake8, pyflakes |
+| TypeScript | typescript-language-server | eslint |
+| JavaScript | typescript-language-server | eslint |
+| Go | gopls | gofmt -e |
+| Rust | rust-analyzer | none built in |
+| C and C++ | clangd | none built in |
+| Shell | bash-language-server | shellcheck |
+| Lua | lua-language-server | none built in |
+| Ruby | solargraph | ruby -c |
+| PHP | intelephense | php -l |
+
+- Ctrl+Space requests completions in the full editor. Typing two identifier characters also suggests after a short delay.
+- Up and Down choose a suggestion, Enter or Tab inserts it, and Esc closes the list. Snippet completions are converted to plain text.
+- Linters run in a separate worker after a file is opened and after a save, with a timeout and capped output.
+- A custom linter command is an argv array. It is never passed through a shell. {file} is replaced with the target path, or appended when the placeholder is absent.
+- Use --devbox PATH to load a different config, --no-lsp or --no-linters to turn one half off.
+- The F9 issues list merges language server diagnostics with linter output for the current file. Enter jumps to the reported line.
 
 ## Safety and limits
 
@@ -233,6 +294,10 @@ The indexer never follows directory symlinks and skips unreadable, binary or ove
 - History is best effort. A missing or locked database never blocks a save, and --no-history disables snapshots entirely.
 - Terminal resizes and small terminals are guarded, so drawing is clipped instead of raising.
 - Mouse support is optional. The app still runs when the terminal or curses build refuses mouse reporting, and every action has a keyboard equivalent. Hold Shift or Option to select text while mouse reporting is active.
+- Language servers and linters run as child processes in the project root. Every request has a timeout, output is capped, and processes are terminated when the session closes.
+- LSP messages are bounded by a header limit, a body limit and a message count, and malformed JSON or an early exit is reported instead of raised.
+- The dev box only reads .fuzzy-surgical/devbox.json or fuzzy-surgical.json from the search root. An invalid entry is skipped with a status message.
+- Diagnostics are filtered to the file open in the editor, so a server notice about another file never appears on the current buffer.
 
 ## Development
 
@@ -270,6 +335,8 @@ venv\Scripts\python -m flake8 main.py fuzzy_surgical tests scripts
 | Python | 3.9 or newer |
 | Pygments | 2.15 or newer, used for syntax highlighting |
 | curses | Included with Python on Linux and macOS. Install windows-curses on Windows. |
+| Language server | Optional. Any LSP server on PATH that speaks stdio, such as pylsp, pyright, gopls or clangd. |
+| Linters | Optional. Any of ruff, flake8, pyflakes, eslint, shellcheck, ruby, php or gofmt on PATH. |
 
 ## Contributing
 
