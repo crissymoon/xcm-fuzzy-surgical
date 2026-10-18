@@ -3,8 +3,61 @@
 from __future__ import annotations
 
 import os
+from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Deque, Optional
+
+BRACKETED_PASTE_ON = "\x1b[?2004h"
+BRACKETED_PASTE_OFF = "\x1b[?2004l"
+_BRACKET_START_BODY = "200"
+_BRACKET_END = "\x1b[201~"
+_PASTE_READ_TIMEOUT_MS = 200
+_MAX_PASTE_CHARS = 1_000_000
+
+
+@dataclass(frozen=True)
+class PastedText:
+    """One bracketed-paste block delivered by the terminal as a unit."""
+
+    text: str
+
+
+_PENDING: Deque[object] = deque()
+
+
+def _terminal_write(sequence: str) -> bool:
+    """Write a control sequence to the terminal without going through curses."""
+    if os.name == "nt":
+        return False
+    import sys
+
+    try:
+        descriptor = sys.__stdout__.fileno()
+    except (AttributeError, OSError, ValueError):
+        return False
+    if not os.isatty(descriptor):
+        return False
+    try:
+        os.write(descriptor, sequence.encode("ascii"))
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def enable_bracketed_paste() -> bool:
+    """Ask the terminal to wrap pasted text in start and end markers."""
+    return _terminal_write(BRACKETED_PASTE_ON)
+
+
+def disable_bracketed_paste() -> None:
+    """Stop bracketed paste reporting, restoring ordinary key input."""
+    _terminal_write(BRACKETED_PASTE_OFF)
+
+
+def _push_back(*values: object) -> None:
+    for value in values:
+        _PENDING.append(value)
 
 
 def get_default_editor() -> str:
@@ -89,12 +142,8 @@ def relative_path(path: str, root: Optional[Path]) -> str:
     return text.replace(os.sep, "/")
 
 
-def read_key(stdscr):
-    """Read a key, returning None instead of raising on terminal errors.
-
-    Single character control keys are normalised to their integer code so
-    callers can compare them with curses constants on every platform.
-    """
+def _read_one(stdscr):
+    """Read one raw key, returning None for a timeout or terminal error."""
     import curses
 
     try:
@@ -103,9 +152,88 @@ def read_key(stdscr):
         reader = None
 
     try:
-        value = reader() if reader is not None else stdscr.getch()
+        return reader() if reader is not None else stdscr.getch()
     except curses.error:
         return None
+
+
+def _read_bracketed_paste(stdscr, restore_timeout: int):
+    """Consume a bracketed paste after an ESC, or push the bytes back.
+
+    Returns the pasted text when the full ESC [ 200 ~ ... ESC [ 201 ~ frame is
+    present, otherwise None so the ESC is delivered as the Escape key and the
+    remaining characters are replayed as ordinary input.
+    """
+    import curses
+
+    try:
+        stdscr.timeout(20)
+    except (AttributeError, curses.error):
+        return None
+    try:
+        following = _read_one(stdscr)
+        if following != "[":
+            if following is not None:
+                _push_back(following)
+            return None
+        prefix = []
+        for _ in range(3):
+            char = _read_one(stdscr)
+            if char is None:
+                break
+            prefix.append(char)
+        if "".join(prefix) != _BRACKET_START_BODY:
+            _push_back("[", *prefix)
+            return None
+        final = _read_one(stdscr)
+        if final != "~":
+            _push_back("[", *prefix, final)
+            return None
+        try:
+            stdscr.timeout(_PASTE_READ_TIMEOUT_MS)
+        except (AttributeError, curses.error):
+            pass
+        collected = []
+        tail = ""
+        while len(collected) < _MAX_PASTE_CHARS:
+            char = _read_one(stdscr)
+            if char is None:
+                break
+            if not isinstance(char, str):
+                char = chr(char) if 0 <= char < 0x110000 else ""
+            if not char:
+                continue
+            collected.append(char)
+            tail = (tail + char)[-len(_BRACKET_END) :]
+            if tail == _BRACKET_END:
+                del collected[-len(_BRACKET_END) :]
+                return "".join(collected)
+        return "".join(collected)
+    finally:
+        try:
+            stdscr.timeout(restore_timeout)
+        except (AttributeError, curses.error):
+            pass
+
+
+def read_key(stdscr, input_timeout: Optional[int] = None):
+    """Read a key, returning None instead of raising on terminal errors.
+
+    Single character control keys are normalised to their integer code so
+    callers can compare them with curses constants on every platform. When
+    ``input_timeout`` is supplied, a leading ESC is checked for a bracketed
+    paste frame and returned as ``PastedText`` instead of the Escape key; the
+    previous input timeout is restored afterwards.
+    """
+    if _PENDING:
+        return _PENDING.popleft()
+    value = _read_one(stdscr)
+    if value is None:
+        return None
+    if value == "\x1b" and input_timeout is not None:
+        pasted = _read_bracketed_paste(stdscr, input_timeout)
+        if pasted is not None:
+            return PastedText(pasted)
     if isinstance(value, str) and len(value) == 1:
         code = ord(value)
         if code < 32 or code == 127:

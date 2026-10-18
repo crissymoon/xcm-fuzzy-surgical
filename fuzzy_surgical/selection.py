@@ -61,6 +61,29 @@ def _classify(char: str) -> str:
     return "punct"
 
 
+def is_truncated_fragment(system_text: str, copied_text: str) -> bool:
+    """Return True when the clipboard holds only a piece of a larger copy.
+
+    Terminals often keep Cmd+C for themselves. On macOS a copy with no real
+    terminal selection can put a single word or a short fragment back on the
+    clipboard, replacing the full block the editor copied. A shorter value that
+    sits on word boundaries inside the remembered text is treated as that
+    truncation, not as a deliberate new copy.
+    """
+    if not copied_text:
+        return False
+    trimmed = system_text.strip("\r\n")
+    if not trimmed or len(trimmed) >= len(copied_text):
+        return False
+    start = copied_text.find(trimmed)
+    if start < 0:
+        return False
+    end = start + len(trimmed)
+    before_ok = start == 0 or not _is_word_char(copied_text[start - 1])
+    after_ok = end >= len(copied_text) or not _is_word_char(copied_text[end])
+    return before_ok and after_ok
+
+
 def clipboard_commands(platform: Optional[str] = None) -> List[List[str]]:
     """Return the native clipboard commands for this platform, best first."""
     name = (platform or sys.platform).lower()

@@ -101,6 +101,7 @@ class EditorMouseMixin:
             self.buffer.set_cursor(
                 self.selection.head_row, self.selection.head_col
             )
+            self._schedule_auto_copy()
             self.notice = f"Selected {self.buffer.line_count} lines. Ctrl+C copies."
         elif action == "undo":
             self._undo()
@@ -174,6 +175,8 @@ class EditorMouseMixin:
                             f"Selected {self._selection_label(text)}. "
                             "Ctrl+C copies, right click or F10 for actions."
                         )
+                else:
+                    self._auto_copy_at = 0.0
             return
         if event.is_drag:
             if not self.selection.active:
@@ -183,6 +186,7 @@ class EditorMouseMixin:
                 self.selection.extend(*position)
                 self.buffer.set_cursor(*position)
                 self._after_cursor_move()
+                self._schedule_auto_copy()
             return
         if not event.is_click:
             return
@@ -201,6 +205,7 @@ class EditorMouseMixin:
         if kind == "triple":
             self.selection.select_line(self.buffer.lines, row)
             self.buffer.set_cursor(row, len(self.buffer.lines[row]))
+            self._schedule_auto_copy()
             self.notice = "Line selected. Ctrl+C copies."
             return
         if kind == "double":
@@ -208,6 +213,7 @@ class EditorMouseMixin:
             self.buffer.set_cursor(
                 self.selection.head_row, self.selection.head_col
             )
+            self._schedule_auto_copy()
             self.notice = "Word selected. Ctrl+C copies."
             return
         self.selection.start(row, column)

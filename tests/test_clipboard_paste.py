@@ -299,3 +299,93 @@ def test_line_editor_paste_keeps_one_line(monkeypatch) -> None:
 
     assert editor.edited_line == "abcone"
     assert "first line" in editor.notice
+
+
+def test_truncated_fragment_matches_a_middle_word() -> None:
+    copied = "alpha beta gamma"
+
+    assert selection_module.is_truncated_fragment("beta", copied) is True
+    assert selection_module.is_truncated_fragment("alpha", copied) is True
+    assert selection_module.is_truncated_fragment("bet", copied) is False
+    assert selection_module.is_truncated_fragment("unrelated", copied) is False
+    assert selection_module.is_truncated_fragment(copied, copied) is False
+
+
+def test_paste_falls_back_when_the_clipboard_holds_a_middle_word(monkeypatch) -> None:
+    monkeypatch.setattr(
+        editor_module,
+        "read_clipboard",
+        lambda: ClipboardRead(True, "beta", "", "pbpaste"),
+    )
+    editor = _editor("alpha beta gamma")
+    editor.buffer.set_cursor(0, len("alpha beta gamma"))
+    editor._remember_clipboard("alpha beta gamma")
+
+    editor._paste_clipboard()
+
+    assert editor.buffer.to_text() == "alpha beta gammaalpha beta gamma"
+    assert "app clipboard" in editor.notice
+
+
+def test_selection_is_copied_without_a_release_event(monkeypatch) -> None:
+    copied = []
+    monkeypatch.setattr(
+        editor_module,
+        "copy_to_clipboard",
+        lambda text: copied.append(text)
+        or ClipboardResult(True, "Copied 10 characters with pbcopy.", "pbpaste"),
+    )
+    editor = _editor("alpha beta gamma")
+    editor.selection.start(0, 0)
+    editor.selection.extend(0, 10)
+    editor._auto_copy_at = 0.1
+
+    assert editor._tick_clipboard() is True
+
+    assert copied == ["alpha beta"]
+    assert editor.clipboard_text == "alpha beta"
+
+
+def test_a_terminal_word_replacement_is_repaired(monkeypatch) -> None:
+    copied = []
+    monkeypatch.setattr(
+        editor_module,
+        "read_clipboard",
+        lambda: ClipboardRead(True, "beta", "", "pbpaste"),
+    )
+    monkeypatch.setattr(
+        editor_module,
+        "copy_to_clipboard",
+        lambda text: copied.append(text)
+        or ClipboardResult(True, "Copied 16 characters with pbcopy.", "pbpaste"),
+    )
+    editor = _editor("alpha beta gamma")
+    editor._remember_clipboard("alpha beta gamma")
+    editor._clipboard_guard_next = 0.0
+
+    assert editor._tick_clipboard() is True
+
+    assert copied == ["alpha beta gamma"]
+    assert "Restored" in editor.notice
+
+
+def test_the_guard_leaves_a_new_external_clipboard_alone(monkeypatch) -> None:
+    copied = []
+    monkeypatch.setattr(
+        editor_module,
+        "read_clipboard",
+        lambda: ClipboardRead(True, "something else", "", "pbpaste"),
+    )
+    monkeypatch.setattr(
+        editor_module,
+        "copy_to_clipboard",
+        lambda text: copied.append(text)
+        or ClipboardResult(True, "copied", "pbpaste"),
+    )
+    editor = _editor("alpha beta gamma")
+    editor._remember_clipboard("alpha beta gamma")
+    editor._clipboard_guard_next = 0.0
+
+    assert editor._tick_clipboard() is False
+
+    assert copied == []

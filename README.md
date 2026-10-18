@@ -24,7 +24,7 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Syntax highlighted results and editor context with a fallback highlighter when Pygments is unavailable
 - Preview rows scroll horizontally to the matched text instead of showing column zero
 - Mouse clicks select result and browser rows, place the caret at the clicked cell in both editors, and double clicks open the selected item
-- Drag with the mouse or trackpad to highlight text in the whole-file editor; releasing the drag copies the whole selection automatically, so pasting works even when the terminal keeps Cmd+C for itself, and Ctrl+C, Ctrl+X and Ctrl+V or the right-click menu copy, cut and paste through pbcopy, wl-copy, xclip, xsel, pbpaste or the Windows clipboard with an OSC 52 fallback
+- Drag with the mouse or trackpad to highlight text in the whole-file editor; the selection is copied shortly after dragging stops even when the terminal never reports a release, a short clipboard watch restores the whole block if the terminal replaces it with a word, and bracketed paste repairs a Cmd+V that still arrives truncated, so Ctrl+V, Cmd+V, Ctrl+C, Ctrl+X and the right-click menu all handle the full highlighted text through pbcopy, wl-copy, xclip, xsel, pbpaste or the Windows clipboard with an OSC 52 fallback
 - Wheel and trackpad scrolling works in the result list, directory picker, file browser and both editors, including the older ncurses wheel-down encoding used by macOS; trackpad events are accumulated so the view follows the finger, and the whole-file editor carries the caret with the scroll instead of leaving it behind
 - Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file
 - Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path
@@ -200,12 +200,12 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Arrows / Home / End | Move the cursor, wrapping between lines. |
 | Page Up / Page Down | Move one page. |
 | Mouse click | Place the cursor at the clicked cell. |
-| Mouse drag | Highlight text by dragging. Releasing copies the whole selection to the clipboard at once, and the selection stays visible. Ctrl+C re-copies it. |
+| Mouse drag | Highlight text by dragging. The whole selection is copied to the clipboard about a fifth of a second after the drag stops, and immediately on release when the terminal reports one, so the selection stays visible and Cmd+V or Ctrl+V receives all of it. A short clipboard watch puts the full text back if the terminal replaces it with a single word. Ctrl+C re-copies it. |
 | Double / triple click | Select the word or the whole line under the pointer. |
-| Ctrl+A / Ctrl+C | Select the whole file, then copy the selection. Copying uses the platform clipboard tool and falls back to an OSC 52 terminal escape. The editor also keeps the exact copied text and uses it when the system clipboard holds only a truncated first word. |
+| Ctrl+A / Ctrl+C | Select the whole file, then copy the selection. Copying uses the platform clipboard tool and falls back to an OSC 52 terminal escape. The editor keeps the exact copied text and uses it when the system clipboard holds only a word or another fragment of it. |
 | Right click | Open a menu at the pointer with Cut, Copy, Paste, Select all, Undo, Redo and Save. Shortcut letters x, c, v, a, u, r and s activate an item. Some terminals keep right click for their own menu; F10 opens the same menu from the keyboard. |
 | F10 | Open the Actions menu beside the caret when the terminal does not pass right clicks through. |
-| Ctrl+X / Ctrl+V | Cut the selection or paste at the caret. A paste replaces a selection, and typing or Backspace over a selection replaces it like a normal editor. If the system clipboard contains only the first word of the text just copied, paste uses the editor's verified copy instead. |
+| Ctrl+X / Ctrl+V | Cut the selection or paste at the caret. A paste replaces a selection, and typing or Backspace over a selection replaces it like a normal editor. The whole-file editor also enables bracketed paste, so the terminal's own Cmd+V arrives as one block, and a block that is only a word or another fragment of the text just copied is replaced with the editor's full verified copy. |
 | Shift+arrows | Extend the selection from the caret, with Home, End, Up and Down variants. |
 | Mouse wheel / trackpad | Scroll four lines per mouse notch. The caret and viewport move together, so the view follows the pointer. |
 | Enter | Split the current line. |

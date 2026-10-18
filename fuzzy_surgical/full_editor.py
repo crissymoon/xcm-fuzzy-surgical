@@ -41,6 +41,7 @@ from fuzzy_surgical.renderer import window_size
 from fuzzy_surgical.selection import (
     Selection,
     copy_to_clipboard,
+    is_truncated_fragment,
     read_clipboard,
 )
 from fuzzy_surgical.text_buffer import (
@@ -51,7 +52,10 @@ from fuzzy_surgical.text_buffer import (
     read_editor_file,
 )
 from fuzzy_surgical.utils import (
+    PastedText,
+    disable_bracketed_paste,
     disable_interrupt_keys,
+    enable_bracketed_paste,
     is_backspace,
     is_enter,
     printable_char,
@@ -74,6 +78,15 @@ TAB = 9
 SPACE = 32
 COMPLETION_DELAY = 0.18
 CLIPBOARD_FALLBACK_SECONDS = 300.0
+# A drag can end without a release report on some terminals, and a terminal
+# may keep Cmd+C for itself. The editor therefore copies shortly after the
+# selection settles and watches the clipboard for a while, restoring the full
+# text when the terminal replaces it with a word or another fragment.
+AUTO_COPY_DELAY = 0.22
+CLIPBOARD_GUARD_SECONDS = 10.0
+CLIPBOARD_GUARD_FAST_SECONDS = 2.5
+CLIPBOARD_GUARD_FAST_GAP = 0.15
+CLIPBOARD_GUARD_SLOW_GAP = 0.6
 SHIFT_UP = getattr(curses, "KEY_SR", 337)
 SHIFT_DOWN = getattr(curses, "KEY_SF", 336)
 SHIFT_LEFT = getattr(curses, "KEY_SLEFT", 393)
@@ -148,6 +161,9 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         # when a terminal copies its own stale selection over ours.
         self.clipboard_text = ""
         self.clipboard_at = 0.0
+        self._auto_copy_at = 0.0
+        self._clipboard_guard_until = 0.0
+        self._clipboard_guard_next = 0.0
 
     def edit(self, file_path: Path) -> bool:
         """Open the file and return True when at least one save happened."""
@@ -170,6 +186,9 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         self._completion_due_at = 0.0
         self._completion_manual = False
         self._completion_pending = False
+        self._auto_copy_at = 0.0
+        self._clipboard_guard_until = 0.0
+        self._clipboard_guard_next = 0.0
         if self.devbox is not None:
             self.devbox.open_document(self.path, self.buffer.to_text())
             self.assist_status = _devbox_advice(self.devbox, self.path) or str(
@@ -182,12 +201,20 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
 
         self._set_input_timeout(120)
         mode_state = disable_interrupt_keys()
+        enable_bracketed_paste()
         try:
             self._draw()
             while True:
-                key = read_key(self.stdscr)
+                key = read_key(self.stdscr, input_timeout=120)
+                if isinstance(key, PastedText):
+                    self._insert_paste(key.text)
+                    self._draw()
+                    continue
                 if key is None or key == -1:
+                    changed = self._tick_clipboard()
                     if self._poll_assist() or self._completion_due():
+                        changed = True
+                    if changed:
                         self._draw()
                     continue
                 if key == curses.KEY_RESIZE:
@@ -219,6 +246,7 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
                     return self.saved_any
                 self._draw()
         finally:
+            disable_bracketed_paste()
             restore_terminal_mode(mode_state)
             self._set_input_timeout(-1)
             self.completion.close()
@@ -366,6 +394,7 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         if key == CTRL_A:
             self.selection.select_all(self.buffer.lines)
             self.buffer.set_cursor(self.selection.head_row, self.selection.head_col)
+            self._schedule_auto_copy()
             self.notice = f"Selected {len(self.buffer.lines)} lines. Ctrl+C copies."
             return False
         if key == curses.ascii.ESC and self.selection.active:
@@ -497,6 +526,7 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
                 edited = True
         if self.selection.active:
             self.selection.clear()
+            self._auto_copy_at = 0.0
         if edited:
             self._after_edit()
         return False
@@ -519,9 +549,18 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
             self.error = result.message
 
     def _remember_clipboard(self, text: str) -> None:
-        """Keep the exact copied text for a verified paste fallback."""
+        """Keep the exact copied text and watch for a terminal truncation."""
+        now = time.monotonic()
         self.clipboard_text = text
-        self.clipboard_at = time.monotonic()
+        self.clipboard_at = now
+        self._auto_copy_at = 0.0
+        self._clipboard_guard_until = now + CLIPBOARD_GUARD_SECONDS
+        self._clipboard_guard_next = now + CLIPBOARD_GUARD_FAST_GAP
+
+    def _schedule_auto_copy(self) -> None:
+        """Copy once the selection stops changing, without waiting for release."""
+        if self.selection.has_text:
+            self._auto_copy_at = time.monotonic() + AUTO_COPY_DELAY
 
     def _clipboard_is_fresh(self) -> bool:
         return (
@@ -531,20 +570,55 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
 
     @staticmethod
     def _clipboard_was_truncated(system_text: str, copied_text: str) -> bool:
-        """Return True when the system clipboard holds a leading word only.
+        """Return True when the system clipboard holds only part of a copy."""
+        return is_truncated_fragment(system_text, copied_text)
 
-        Some terminals copy their own stale selection when the user presses
-        Cmd+C, which can replace an in-app copy with the first word of it.
-        A shorter value that is a word-boundary prefix of the text this editor
-        copied is treated as truncation rather than a fresh external copy.
+    def _tick_clipboard(self) -> bool:
+        """Settle pending copies and repair a clipboard the terminal truncated.
+
+        Terminals that keep Cmd+C for themselves can replace the editor's copy
+        with a stale word at any moment while a selection is visible. Watching
+        the clipboard for a short window means a following Cmd+V still receives
+        the whole block, even though the app never saw the copy key.
         """
-        trimmed = system_text.rstrip("\r\n")
-        if not trimmed or len(trimmed) >= len(copied_text):
-            return False
-        if not copied_text.startswith(trimmed):
-            return False
-        following = copied_text[len(trimmed) : len(trimmed) + 1]
-        return bool(following) and following.isspace()
+        now = time.monotonic()
+        changed = False
+        if self._auto_copy_at and now >= self._auto_copy_at:
+            self._auto_copy_at = 0.0
+            text = self.selection.text(self.buffer.lines)
+            if text and text != self.clipboard_text:
+                result = copy_to_clipboard(text)
+                if result.ok:
+                    self._remember_clipboard(text)
+                    self.error = ""
+                    self.notice = (
+                        f"{result.message} Ctrl+V pastes it, "
+                        "right click or F10 opens the actions."
+                    )
+                    changed = True
+        if not self.clipboard_text or now >= self._clipboard_guard_until:
+            return changed
+        if now < self._clipboard_guard_next:
+            return changed
+        fast_until = self._clipboard_guard_until - CLIPBOARD_GUARD_SECONDS
+        fast_until += CLIPBOARD_GUARD_FAST_SECONDS
+        gap = CLIPBOARD_GUARD_FAST_GAP if now < fast_until else CLIPBOARD_GUARD_SLOW_GAP
+        self._clipboard_guard_next = now + gap
+        current = read_clipboard()
+        if not current.ok:
+            return changed
+        if current.text.strip("\r\n") and not is_truncated_fragment(
+            current.text, self.clipboard_text
+        ):
+            return changed
+        result = copy_to_clipboard(self.clipboard_text)
+        if result.ok:
+            self.notice = (
+                f"Restored {self._selection_label(self.clipboard_text)} "
+                "to the clipboard."
+            )
+            changed = True
+        return changed
 
     def _cut_selection(self) -> None:
         """Copy the selection and remove it, in one undoable change."""
@@ -571,6 +645,38 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         self.selection.clear()
         self._after_cursor_move()
         self._after_edit()
+
+    def _insert_paste(self, text: str) -> None:
+        """Insert a terminal bracketed paste, repairing a truncated clipboard.
+
+        A terminal that keeps Cmd+V for itself sends the clipboard text as one
+        marked block. If that block is only a word or another fragment of the
+        text the editor last copied, the full remembered copy is used instead,
+        so a stale terminal clipboard cannot shorten the paste.
+        """
+        text = normalize_newlines(text)
+        method = "terminal paste"
+        if (
+            text
+            and self._clipboard_is_fresh()
+            and is_truncated_fragment(text, self.clipboard_text)
+        ):
+            text = self.clipboard_text
+            method = "app clipboard"
+        if not text:
+            self.notice = "The pasted text was empty."
+            return
+        if self.selection.has_text:
+            (start_row, start_col), (end_row, end_col) = self.selection.ordered()
+            self.buffer.replace_range(start_row, start_col, end_row, end_col, text)
+        else:
+            self.buffer.insert_text(text)
+        self.selection.clear()
+        self._auto_copy_at = 0.0
+        self._after_cursor_move()
+        self._after_edit()
+        self.error = ""
+        self.notice = f"Pasted {self._selection_label(text)} ({method})."
 
     def _paste_clipboard(self) -> None:
         """Insert the system clipboard at the caret, replacing a selection.
@@ -639,6 +745,7 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         elif direction == "end":
             self.buffer.move_end()
         self.selection.extend(self.buffer.cursor_row, self.buffer.cursor_col)
+        self._schedule_auto_copy()
         self._after_cursor_move()
 
     def _undo(self) -> None:
