@@ -13,6 +13,8 @@ module or the terminal does not provide it, so the keyboard remains enough.
 from __future__ import annotations
 
 import curses
+import os
+import sys
 import time
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -25,6 +27,15 @@ DOUBLE_CLICK_SECONDS = 0.45
 DEDUPE_SECONDS = 0.06
 CLICK_ECHO_SECONDS = 0.35
 CLICK_ECHO_DISTANCE = 2
+# ncurses on several systems (notably the one shipped with macOS) asks the
+# terminal for mode 1000 only. That reports presses and releases but no
+# motion, so a click-drag can never grow a selection. Button-event tracking
+# (1002) is requested directly, after ncurses has enabled its own mode.
+# Mode 1006 is switched off so the terminal keeps the legacy encoding, which
+# every ncurses build can decode; SGR reports on such a build would be typed
+# into the buffer as text.
+BUTTON_EVENT_TRACKING_ON = "\x1b[?1006l\x1b[?1002h"
+BUTTON_EVENT_TRACKING_OFF = "\x1b[?1002l"
 # Repeated right presses arrive when a terminal reports a horizontal
 # trackpad swipe through the same button as the right click. A burst is
 # swallowed so a swipe cannot open a menu on every tick.
@@ -67,6 +78,7 @@ _SCROLL_DOWN_BITS = _bits("BUTTON5_PRESSED", "BUTTON5_CLICKED")
 _REPORT_BIT = _bits("REPORT_MOUSE_POSITION")
 _LEGACY_SCROLL_DOWN = _SCROLL_DOWN_BITS == 0 and _REPORT_BIT != 0
 _ACTIVE = False
+_EXTENDED_TRACKING = False
 # Old ncurses builds decode a drag as a bare position report, exactly like
 # wheel down. The button state is lost, so a press has to be remembered before
 # a report can be classed as a drag rather than a wheel tick.
@@ -113,13 +125,41 @@ def mouse_available() -> bool:
     )
 
 
+def _write_terminal(sequence: str) -> bool:
+    """Write a control sequence straight to the terminal.
+
+    ncurses decides which mouse mode to request, and several builds ask for
+    mode 1000 only. Writing the mode here, after curses has drained its own
+    state, adds motion reporting without changing anything else. Non-tty
+    output is left alone so redirected runs never collect escape codes.
+    """
+    if os.name == "nt":
+        return False
+    try:
+        descriptor = sys.__stdout__.fileno()
+    except (AttributeError, OSError, ValueError):
+        return False
+    if not os.isatty(descriptor):
+        return False
+    try:
+        os.write(descriptor, sequence.encode("ascii"))
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def extended_tracking_enabled() -> bool:
+    """Return True when button-event tracking was requested from the terminal."""
+    return _EXTENDED_TRACKING
+
+
 def enable_mouse(stdscr) -> bool:
-    """Ask the terminal to report clicks and wheel ticks.
+    """Ask the terminal to report clicks, motion and wheel ticks.
 
     Returns True when at least one requested event type is available. The
     result is only a capability hint; read_mouse() still guards every call.
     """
-    global _ACTIVE
+    global _ACTIVE, _EXTENDED_TRACKING
     if not mouse_available():
         return False
 
@@ -145,19 +185,24 @@ def enable_mouse(stdscr) -> bool:
 
     available = result[0] if isinstance(result, tuple) else result
     _ACTIVE = bool(available & mask)
+    if _ACTIVE:
+        _EXTENDED_TRACKING = _write_terminal(BUTTON_EVENT_TRACKING_ON)
     return _ACTIVE
 
 
 def disable_mouse() -> None:
     """Stop terminal mouse reporting before the curses session ends."""
-    global _ACTIVE
-    if not mouse_available():
+    global _ACTIVE, _EXTENDED_TRACKING
+    if not mouse_available() and not _EXTENDED_TRACKING:
         return
     try:
         curses.mousemask(0)
     except (curses.error, AttributeError):
         pass
+    if _EXTENDED_TRACKING:
+        _write_terminal(BUTTON_EVENT_TRACKING_OFF)
     _ACTIVE = False
+    _EXTENDED_TRACKING = False
 
 
 def mouse_enabled() -> bool:
@@ -173,14 +218,16 @@ def event_from_state(x: int, y: int, state: int) -> Optional[MouseEvent]:
     carry ``REPORT_MOUSE_POSITION``; when the primary button is still held that
     is a drag, which is what the editor uses to grow a selection.
     """
+    global _BUTTON_HELD
     if state & _SCROLL_UP_BITS:
+        _BUTTON_HELD = False
         return MouseEvent(x, y, "scroll", -1)
     if _SCROLL_DOWN_BITS and state & _SCROLL_DOWN_BITS:
+        _BUTTON_HELD = False
         return MouseEvent(x, y, "scroll", 1)
     if _RIGHT_CLICK_BITS and state & _RIGHT_CLICK_BITS:
         return MouseEvent(x, y, "right_click")
 
-    global _BUTTON_HELD
     motion = bool(_REPORT_BIT and state & _REPORT_BIT)
     primary = bool(_PRIMARY_CLICK_BITS and state & _PRIMARY_CLICK_BITS)
     if _RELEASE_BITS and state & _RELEASE_BITS:
@@ -245,7 +292,8 @@ def normalise_event(
 
     previous = _LAST_SCROLL
     if (
-        event.is_click
+        not _EXTENDED_TRACKING
+        and event.is_click
         and previous[3] != 0
         and when - previous[0] <= CLICK_ECHO_SECONDS
         and abs(event.x - previous[1]) <= CLICK_ECHO_DISTANCE

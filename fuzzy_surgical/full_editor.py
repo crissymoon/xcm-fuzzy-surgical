@@ -14,22 +14,18 @@ from __future__ import annotations
 import os
 import time
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 import curses
 import curses.ascii
 
 from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.completion_ui import CompletionPopup
-from fuzzy_surgical.context_menu import ContextMenu, MenuItem
+from fuzzy_surgical.context_menu import ContextMenu
 from fuzzy_surgical.devbox import DevBoxSession
 from fuzzy_surgical.diagnostics_ui import DiagnosticPanel
-from fuzzy_surgical.editor_overlays import (
-    draw_discard as draw_discard_overlay,
-    draw_help as draw_help_overlay,
-    draw_history as draw_history_overlay,
-    draw_saved as draw_saved_overlay,
-)
+from fuzzy_surgical.editor_mouse import EditorMouseMixin
+from fuzzy_surgical.editor_view import EditorViewMixin
 from fuzzy_surgical.file_writer import FileWriteError, WriteResult, file_digest, write_text
 from fuzzy_surgical.history import SnapshotStore
 from fuzzy_surgical.lsp.completion import completion_prefix
@@ -38,22 +34,13 @@ from fuzzy_surgical.mouse import (
     MOUSE_KEY,
     ScrollGate,
     ClickTracker,
-    MouseEvent,
     read_mouse,
     reset_input_state,
 )
-from fuzzy_surgical.renderer import (
-    draw_code_line,
-    index_for_display_column,
-    safe_addstr,
-    sanitize,
-    shorten,
-    window_size,
-)
+from fuzzy_surgical.renderer import window_size
 from fuzzy_surgical.selection import (
     Selection,
     copy_to_clipboard,
-    draw_selection,
     read_clipboard,
 )
 from fuzzy_surgical.text_buffer import (
@@ -65,7 +52,6 @@ from fuzzy_surgical.text_buffer import (
 )
 from fuzzy_surgical.utils import (
     disable_interrupt_keys,
-    display_path,
     is_backspace,
     is_enter,
     printable_char,
@@ -115,7 +101,7 @@ def _devbox_advice(devbox, path: str) -> str:
     return ""
 
 
-class FullEditor:
+class FullEditor(EditorMouseMixin, EditorViewMixin):
     """Scrollable editor for one whole file."""
 
     def __init__(
@@ -416,6 +402,11 @@ class FullEditor:
             if not self.diagnostics_panel.visible and not self.diagnostics:
                 self.notice = "No issues reported for this file yet."
             return False
+        if key == curses.KEY_F10:
+            # Terminals such as Apple Terminal never pass a right click on,
+            # so the same Actions menu is reachable from the keyboard.
+            self._open_context_menu_at_caret()
+            return False
 
         edited = False
         if self.selection.has_text:
@@ -601,84 +592,6 @@ class FullEditor:
         self.selection.extend(self.buffer.cursor_row, self.buffer.cursor_col)
         self._after_cursor_move()
 
-    # -- context menu --------------------------------------------------
-    def _open_context_menu(self, x: int, y: int) -> None:
-        """Show the right-click menu at the pointer."""
-        height, width = window_size(self.stdscr) if self.stdscr is not None else (24, 80)
-        selected = self.selection.has_text
-        items = [
-            MenuItem("cut", "Cut", "Ctrl+X", selected, "x"),
-            MenuItem("copy", "Copy", "Ctrl+C", selected, "c"),
-            MenuItem("paste", "Paste", "Ctrl+V", True, "v"),
-            MenuItem(
-                "select_all",
-                "Select all",
-                "Ctrl+A",
-                self.buffer.line_count > 0,
-                "a",
-            ),
-            MenuItem(
-                "undo", "Undo", "Ctrl+Z", bool(self.buffer.undo_stack), "u"
-            ),
-            MenuItem(
-                "redo", "Redo", "Ctrl+Y", bool(self.buffer.redo_stack), "r"
-            ),
-            MenuItem("save", "Save", "Ctrl+S", self.buffer.dirty, "s"),
-        ]
-        self.completion.close()
-        self.diagnostics_panel.close()
-        self.menu.open(x, y, items, height, width)
-
-    def _handle_menu_key(self, key) -> bool:
-        if key == curses.KEY_UP:
-            self.menu.move(-1)
-            return False
-        if key == curses.KEY_DOWN:
-            self.menu.move(1)
-            return False
-        if key == curses.ascii.ESC:
-            self.menu.close()
-            return False
-        if is_enter(key) or key == SPACE:
-            self._activate_menu()
-            return False
-        letter = printable_char(key)
-        if letter:
-            if self.menu.select_matching(letter):
-                self._activate_menu()
-            else:
-                self.menu.close()
-        return False
-
-    def _activate_menu(self) -> None:
-        item = self.menu.selected_item()
-        if item is None:
-            self.menu.close()
-            return
-        self._run_menu_action(item.action)
-
-    def _run_menu_action(self, action: str) -> None:
-        self.menu.close()
-        self.error = ""
-        if action == "cut":
-            self._cut_selection()
-        elif action == "copy":
-            self._copy_selection()
-        elif action == "paste":
-            self._paste_clipboard()
-        elif action == "select_all":
-            self.selection.select_all(self.buffer.lines)
-            self.buffer.set_cursor(
-                self.selection.head_row, self.selection.head_col
-            )
-            self.notice = f"Selected {self.buffer.line_count} lines. Ctrl+C copies."
-        elif action == "undo":
-            self._undo()
-        elif action == "redo":
-            self._redo()
-        elif action == "save":
-            self._save()
-
     def _undo(self) -> None:
         if not self.buffer.undo():
             self.notice = "Nothing to undo."
@@ -694,119 +607,6 @@ class FullEditor:
         self.selection.clear()
         self._after_cursor_move()
         self._after_edit()
-
-    def _handle_mouse(self, event: MouseEvent) -> None:
-        """Apply a click, drag, release or wheel tick to the active mode."""
-        if self.menu.visible:
-            if event.is_scroll:
-                self.menu.close()
-                self._scroll_mouse(event.direction)
-                return
-            if event.is_right_click:
-                self._open_context_menu(event.x, event.y)
-                return
-            if event.is_click:
-                item = self.menu.item_at(event.x, event.y)
-                if item is not None:
-                    self._run_menu_action(item.action)
-                elif not self.menu.contains(event.x, event.y):
-                    self.menu.close()
-            return
-        if event.is_right_click:
-            if self.mode == "edit":
-                self._open_context_menu(event.x, event.y)
-            return
-        if event.is_scroll:
-            self._scroll_mouse(event.direction)
-            return
-
-        if self.mode in ("saved", "help"):
-            if event.is_click:
-                self.mode = "edit"
-            return
-        if self.mode == "discard":
-            if event.is_click:
-                self.mode = "edit"
-            return
-        if self.mode == "history":
-            if event.is_click:
-                self._click_history(event)
-            return
-        if self.mode != "edit":
-            return
-
-        if event.is_release:
-            self.selection.release()
-            return
-        if event.is_drag:
-            if not self.selection.active:
-                return
-            position = self._drag_position(event.y, event.x)
-            if position is not None:
-                self.selection.extend(*position)
-                self.buffer.set_cursor(*position)
-                self._after_cursor_move()
-            return
-        if not event.is_click:
-            return
-
-        position = self._buffer_position(event.y, event.x)
-        if position is None:
-            return
-        row, column = position
-        kind = self.click_tracker.classify(event)
-        if kind is None:
-            return
-        self.error = ""
-        self.notice = ""
-        if event.x < self._gutter_width():
-            self.x_offset = 0
-        if kind == "triple":
-            self.selection.select_line(self.buffer.lines, row)
-            self.buffer.set_cursor(row, len(self.buffer.lines[row]))
-            self.notice = "Line selected. Ctrl+C copies."
-            return
-        if kind == "double":
-            self.selection.select_word(self.buffer.lines, row, column)
-            self.buffer.set_cursor(
-                self.selection.head_row, self.selection.head_col
-            )
-            self.notice = "Word selected. Ctrl+C copies."
-            return
-        self.selection.start(row, column)
-        self.buffer.set_cursor(row, column)
-
-    def _drag_position(self, y: int, x: int):
-        """Map a drag cell to the buffer, scrolling when the pointer leaves."""
-        if self.stdscr is None or self.buffer.line_count == 0:
-            return None
-        height, width = window_size(self.stdscr)
-        top = 2
-        rows = self._content_rows(height)
-        if y < top:
-            self._scroll_view(-1)
-            row = self.scroll_row
-        elif y >= top + rows:
-            self._scroll_view(1)
-            row = self.scroll_row + rows - 1
-        else:
-            row = self.scroll_row + (y - top)
-        row = max(0, min(self.buffer.line_count - 1, row))
-        gutter = self._gutter_width()
-        available = max(1, width - gutter - 1)
-        offset = max(0, min(available - 1, x - gutter))
-        display_column = self.x_offset + offset
-        line = self.buffer.lines[row]
-        return row, index_for_display_column(line, display_column)
-
-    def _scroll_mouse(self, direction: int) -> None:
-        delta = self.scroll_gate.lines(direction)
-        if delta == 0:
-            return
-        if self.mode == "edit":
-            self._scroll_view(delta)
-        elif self.mode == "history":
-            self._select_history(self.history_index + delta)
 
     def _scroll_view(self, delta: int) -> None:
         """Scroll the viewport and carry the caret with it.
@@ -834,42 +634,6 @@ class FullEditor:
     def _gutter_width(self) -> int:
         number_width = max(3, len(str(self.buffer.line_count)))
         return number_width + 2
-
-    def _buffer_position(self, y: int, x: int) -> Optional[Tuple[int, int]]:
-        """Translate a screen cell in the edit view to a buffer position."""
-        if self.stdscr is None:
-            return None
-        height, width = window_size(self.stdscr)
-        top = 2
-        rows = self._content_rows(height)
-        if y < top or y >= top + rows:
-            return None
-        row = self.scroll_row + (y - top)
-        if row < 0 or row >= self.buffer.line_count:
-            return None
-        gutter = self._gutter_width()
-        available = max(1, width - gutter - 1)
-        display_column = self.x_offset + max(0, min(available - 1, x - gutter))
-        column = index_for_display_column(self.buffer.lines[row], display_column)
-        return row, column
-
-    def _click_history(self, event: MouseEvent) -> None:
-        height, _width = window_size(self.stdscr)
-        rows = max(1, height - 6)
-        box_height = min(height - 1, rows + 4)
-        top = max(1, (height - box_height) // 2)
-        first_row = top + 2
-        offset = event.y - first_row
-        if offset < 0 or offset >= rows:
-            return
-        index = self.history_scroll + offset
-        if index < 0 or index >= len(self.history_entries):
-            return
-        if self.click_tracker.classify(event) == "double":
-            self.history_index = index
-            self._restore_selected()
-        else:
-            self._select_history(index)
 
     def _select_history(self, index: int) -> None:
         if not self.history_entries:
@@ -1032,218 +796,3 @@ class FullEditor:
             self.history_scroll = self.history_index
         elif self.history_index >= self.history_scroll + rows:
             self.history_scroll = self.history_index - rows + 1
-
-    def _draw(self) -> None:
-        self.stdscr.erase()
-        height, width = window_size(self.stdscr)
-        if height == 0 or width == 0:
-            return
-        if height < 8 or width < 30:
-            safe_addstr(
-                self.stdscr,
-                0,
-                0,
-                "Terminal too small for the file editor. Resize or press Esc.",
-                self.theme.attr("ui.error", bold=True),
-            )
-            self.stdscr.refresh()
-            return
-
-        self._draw_header(height, width)
-        if self.mode == "edit":
-            self._draw_edit(height, width)
-            if self.diagnostics_panel.visible:
-                self.diagnostics_panel.draw(
-                    self.stdscr, self.theme, status=self.assist_status
-                )
-        elif self.mode == "saved":
-            self._draw_saved(height, width)
-        elif self.mode == "discard":
-            self._draw_discard(height, width)
-        elif self.mode == "history":
-            self._draw_history(height, width)
-        else:
-            self._draw_help(height, width)
-        self._draw_status(height, width)
-        if self.mode == "edit" and self.menu.visible:
-            self.menu.draw(self.stdscr, self.theme, height, width)
-        self.stdscr.refresh()
-
-    def _draw_header(self, height: int, width: int) -> None:
-        marker = " *" if self.buffer.dirty else ""
-        issues = f" !{len(self.diagnostics)}" if self.diagnostics else ""
-        label = shorten(display_path(Path(self.path)), max(10, width - 34))
-        title = f"Editing {label} ({self.buffer.line_count} lines){issues}{marker}"
-        safe_addstr(
-            self.stdscr,
-            0,
-            0,
-            title[: width - 1],
-            self.theme.attr("ui.accent", bold=True),
-        )
-        position = f" {self.buffer.cursor_row + 1}:{self.buffer.cursor_col + 1} "
-        safe_addstr(
-            self.stdscr,
-            0,
-            max(0, width - len(position) - 1),
-            position,
-            self.theme.attr("ui.lineno"),
-        )
-        safe_addstr(
-            self.stdscr,
-            1,
-            0,
-            "Ctrl+S save  F2 save  F6 snapshots  F8 reload  "
-            "^N complete  F9 issues  ^C copy  F1 help"[: width - 1],
-            self.theme.attr("ui.dim", dim=True),
-        )
-
-    def _content_rows(self, height: int) -> int:
-        return max(1, height - 4)
-
-    def _draw_edit(self, height: int, width: int) -> None:
-        rows = self._content_rows(height)
-        top = 2
-        if self.buffer.cursor_row < self.scroll_row:
-            self.scroll_row = self.buffer.cursor_row
-        elif self.buffer.cursor_row >= self.scroll_row + rows:
-            self.scroll_row = self.buffer.cursor_row - rows + 1
-
-        number_width = max(3, len(str(self.buffer.line_count)))
-        gutter_width = number_width + 2
-        available = max(1, width - gutter_width - 1)
-
-        line_text = self.buffer.lines[self.buffer.cursor_row]
-        caret_display = len(sanitize(line_text[: self.buffer.cursor_col]))
-        if caret_display < self.x_offset:
-            self.x_offset = caret_display
-        elif caret_display >= self.x_offset + available:
-            self.x_offset = caret_display - available + 1
-
-        end = min(self.buffer.line_count, self.scroll_row + rows)
-        for row_index in range(self.scroll_row, end):
-            screen_row = top + (row_index - self.scroll_row)
-            active = row_index == self.buffer.cursor_row
-            number = f"{row_index + 1:>{number_width}} "
-            attr = self.theme.attr("edit.active", bold=True) if active else self.theme.attr(
-                "ui.lineno", dim=True
-            )
-            safe_addstr(self.stdscr, screen_row, 0, number, attr)
-            draw_code_line(
-                self.stdscr,
-                screen_row,
-                gutter_width,
-                self.buffer.lines[row_index],
-                self.path,
-                self.theme,
-                base_attr=curses.A_BOLD if active else 0,
-                max_width=available,
-                x_offset=self.x_offset,
-            )
-            draw_selection(
-                self.stdscr,
-                screen_row,
-                gutter_width,
-                self.buffer.lines[row_index],
-                self.selection.span(
-                    row_index, len(self.buffer.lines[row_index])
-                ),
-                self.x_offset,
-                available,
-                self.theme,
-            )
-
-        if self.scroll_row > 0:
-            safe_addstr(self.stdscr, top, max(0, width - 8), " ^ more", curses.A_DIM)
-        if end < self.buffer.line_count:
-            safe_addstr(self.stdscr, top + rows - 1, max(0, width - 8), " v more", curses.A_DIM)
-
-        caret_row = top + (self.buffer.cursor_row - self.scroll_row)
-        caret_col = gutter_width + caret_display - self.x_offset
-        if 0 <= caret_col < width - 1 and 0 <= caret_row < height - 2:
-            rendered = sanitize(self.buffer.lines[self.buffer.cursor_row])
-            caret_index = caret_display - self.x_offset
-            caret_char = rendered[caret_index] if 0 <= caret_index < len(rendered) else " "
-            safe_addstr(self.stdscr, caret_row, caret_col, caret_char, curses.A_REVERSE)
-            try:
-                self.stdscr.move(caret_row, caret_col)
-            except curses.error:
-                pass
-
-        if self.error:
-            safe_addstr(
-                self.stdscr,
-                height - 2,
-                0,
-                self.error[: width - 1],
-                self.theme.attr("ui.error", bold=True),
-            )
-        elif self.notice:
-            safe_addstr(
-                self.stdscr,
-                height - 2,
-                0,
-                self.notice[: width - 1],
-                self.theme.attr("ui.success"),
-            )
-
-        if self.completion.visible:
-            self.completion.draw(
-                self.stdscr,
-                self.theme,
-                caret_row,
-                caret_col,
-                max_rows=max(1, height - 5),
-                max_width=max(24, width - gutter_width - 2),
-            )
-
-    def _draw_status(self, height: int, width: int) -> None:
-        state = "modified" if self.buffer.dirty else "saved"
-        left = f" Esc back  {state} "
-        if self.selection.has_text:
-            left += " selection "
-        if self.assist_status:
-            left += f" {self.assist_status} "
-        if self._completion_pending and self.completion.requested:
-            left += " waiting for completions "
-        right = f" {self.buffer.cursor_row + 1}/{self.buffer.line_count} "
-        if width < 64:
-            left = " Ctrl+S save  Esc back "
-        padding = max(0, width - len(left) - len(right))
-        bar = (left + " " * padding + right)[: width - 1]
-        safe_addstr(self.stdscr, height - 1, 0, bar, self.theme.attr("ui.status"))
-
-    def _draw_saved(self, height: int, width: int) -> None:
-        saved = self.last_save
-        draw_saved_overlay(
-            self.stdscr,
-            self.theme,
-            height,
-            width,
-            path=saved.path if saved is not None else self.path,
-            line_count=self.buffer.line_count,
-            byte_count=saved.bytes_written if saved is not None else None,
-            history_note=self.history_note,
-            saved_line=self.saved_line,
-            saved_proof=self.saved_proof,
-        )
-
-    def _draw_discard(self, height: int, width: int) -> None:
-        draw_discard_overlay(
-            self.stdscr, self.theme, height, width, path=self.path
-        )
-
-    def _draw_history(self, height: int, width: int) -> None:
-        self._ensure_history_visible()
-        draw_history_overlay(
-            self.stdscr,
-            self.theme,
-            height,
-            width,
-            entries=self.history_entries,
-            selected=self.history_index,
-            scroll=self.history_scroll,
-        )
-
-    def _draw_help(self, height: int, width: int) -> None:
-        draw_help_overlay(self.stdscr, self.theme, height, width)

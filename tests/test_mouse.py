@@ -334,3 +334,101 @@ def test_scroll_gate_uses_one_row_per_notch_when_asked() -> None:
     assert gate.lines(-1, 1) == -1
     now[0] = 1.0
     assert gate.lines(1, 1) == 1
+
+
+def test_enable_mouse_requests_button_event_tracking(monkeypatch) -> None:
+    written = []
+    monkeypatch.setattr(mouse, "_write_terminal", lambda seq: written.append(seq) or True)
+    monkeypatch.setattr(mouse.curses, "mousemask", lambda mask: (mask, 0))
+    monkeypatch.setattr(mouse.curses, "mouseinterval", lambda value: None)
+    monkeypatch.setattr(mouse, "_ACTIVE", False)
+    monkeypatch.setattr(mouse, "_EXTENDED_TRACKING", False)
+
+    assert mouse.enable_mouse(None) is True
+    assert mouse.BUTTON_EVENT_TRACKING_ON in written
+    assert "\x1b[?1002h" in mouse.BUTTON_EVENT_TRACKING_ON
+    assert "\x1b[?1006l" in mouse.BUTTON_EVENT_TRACKING_ON
+    assert mouse.extended_tracking_enabled() is True
+
+    mouse.disable_mouse()
+    assert mouse.BUTTON_EVENT_TRACKING_OFF in written
+    assert mouse.extended_tracking_enabled() is False
+
+
+def test_drag_needs_a_held_button_and_a_release_clears_it(monkeypatch) -> None:
+    monkeypatch.setattr(mouse, "_PRIMARY_CLICK_BITS", 0x01)
+    monkeypatch.setattr(mouse, "_RELEASE_BITS", 0x20)
+    monkeypatch.setattr(mouse, "_SCROLL_UP_BITS", 0x02)
+    monkeypatch.setattr(mouse, "_SCROLL_DOWN_BITS", 0)
+    monkeypatch.setattr(mouse, "_REPORT_BIT", 0x08)
+    monkeypatch.setattr(mouse, "_LEGACY_SCROLL_DOWN", True)
+    monkeypatch.setattr(mouse, "_RIGHT_CLICK_BITS", 0)
+    mouse.reset_input_state()
+
+    assert mouse.event_from_state(3, 4, 0x01) == MouseEvent(3, 4, "click")
+    assert mouse.event_from_state(5, 4, 0x08) == MouseEvent(5, 4, "drag")
+    assert mouse.event_from_state(5, 4, 0x20) == MouseEvent(5, 4, "release")
+    # Motion after the release is a bare position report, which the legacy
+    # build uses for wheel down. It must not continue the drag.
+    assert mouse.event_from_state(6, 4, 0x08) == MouseEvent(6, 4, "scroll", 1)
+
+
+def test_wheel_clears_a_stale_held_button(monkeypatch) -> None:
+    monkeypatch.setattr(mouse, "_PRIMARY_CLICK_BITS", 0x01)
+    monkeypatch.setattr(mouse, "_RELEASE_BITS", 0x20)
+    monkeypatch.setattr(mouse, "_SCROLL_UP_BITS", 0x02)
+    monkeypatch.setattr(mouse, "_SCROLL_DOWN_BITS", 0)
+    monkeypatch.setattr(mouse, "_REPORT_BIT", 0x08)
+    monkeypatch.setattr(mouse, "_LEGACY_SCROLL_DOWN", True)
+    monkeypatch.setattr(mouse, "_RIGHT_CLICK_BITS", 0)
+    mouse.reset_input_state()
+
+    assert mouse.event_from_state(3, 4, 0x01) == MouseEvent(3, 4, "click")
+    assert mouse.event_from_state(3, 4, 0x02) == MouseEvent(3, 4, "scroll", -1)
+    assert mouse.event_from_state(3, 4, 0x08) == MouseEvent(3, 4, "scroll", 1)
+
+
+def test_click_echo_guard_is_off_when_motion_is_reported(monkeypatch) -> None:
+    monkeypatch.setattr(mouse, "_PRIMARY_CLICK_BITS", 0x01)
+    monkeypatch.setattr(mouse, "_RELEASE_BITS", 0x20)
+    monkeypatch.setattr(mouse, "_SCROLL_UP_BITS", 0x02)
+    monkeypatch.setattr(mouse, "_SCROLL_DOWN_BITS", 0x04)
+    monkeypatch.setattr(mouse, "_REPORT_BIT", 0x08)
+    monkeypatch.setattr(mouse, "_LEGACY_SCROLL_DOWN", False)
+    monkeypatch.setattr(mouse, "_EXTENDED_TRACKING", True)
+    monkeypatch.setattr(mouse, "_RIGHT_CLICK_BITS", 0)
+    mouse.reset_input_state()
+
+    assert mouse.normalise_event(4, 5, 0x04, now=10.0) == MouseEvent(4, 5, "scroll", 1)
+    assert mouse.normalise_event(4, 5, 0x01, now=10.1) == MouseEvent(4, 5, "click")
+
+
+def test_f10_opens_the_actions_menu_from_the_keyboard() -> None:
+    import curses
+
+    editor = FullEditor(FakeScreen(24, 80), None)
+    editor.path = "/tmp/app.py"
+    editor.buffer = TextBuffer("alpha zebracorn delta\nsecond line\n")
+    editor.buffer.set_cursor(0, 8)
+
+    assert editor._handle_edit_key(curses.KEY_F10) is False
+    assert editor.menu.visible
+    labels = [item.label for item in editor.menu.items]
+    assert "Copy" in labels and "Paste" in labels
+
+
+def test_release_reports_the_selection_size(monkeypatch) -> None:
+    monkeypatch.setattr(mouse, "_EXTENDED_TRACKING", True)
+    editor = FullEditor(FakeScreen(24, 80), None)
+    editor.path = "/tmp/app.py"
+    editor.buffer = TextBuffer("alpha zebracorn delta\nsecond line\n")
+    editor.scroll_row = 0
+
+    editor._handle_mouse(MouseEvent(6, 2, "click"))
+    editor._handle_mouse(MouseEvent(14, 2, "drag"))
+    editor._handle_mouse(MouseEvent(14, 2, "release"))
+
+    assert editor.selection.has_text
+    assert "characters selected" not in editor.notice
+    assert "Selected" in editor.notice
+    assert "Ctrl+C" in editor.notice

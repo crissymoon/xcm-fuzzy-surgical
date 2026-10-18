@@ -203,7 +203,8 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Mouse drag | Highlight text by dragging. Releasing keeps the selection, and Ctrl+C copies it. |
 | Double / triple click | Select the word or the whole line under the pointer. |
 | Ctrl+A / Ctrl+C | Select the whole file, then copy the selection. Copying uses the platform clipboard tool and falls back to an OSC 52 terminal escape. |
-| Right click | Open a menu at the pointer with Cut, Copy, Paste, Select all, Undo, Redo and Save. Shortcut letters x, c, v, a, u, r and s activate an item. |
+| Right click | Open a menu at the pointer with Cut, Copy, Paste, Select all, Undo, Redo and Save. Shortcut letters x, c, v, a, u, r and s activate an item. Some terminals keep right click for their own menu; F10 opens the same menu from the keyboard. |
+| F10 | Open the Actions menu beside the caret when the terminal does not pass right clicks through. |
 | Ctrl+X / Ctrl+V | Cut the selection or paste at the caret. A paste replaces a selection, and typing or Backspace over a selection replaces it like a normal editor. |
 | Shift+arrows | Extend the selection from the caret, with Home, End, Up and Down variants. |
 | Mouse wheel / trackpad | Scroll four lines per mouse notch. The caret and viewport move together, so the view follows the pointer. |
@@ -318,6 +319,7 @@ The indexer never follows directory symlinks and skips unreadable, binary or ove
 - History is best effort. A missing or locked database never blocks a save, and --no-history disables snapshots entirely.
 - Terminal resizes and small terminals are guarded, so drawing is clipped instead of raising.
 - Mouse support is optional. The app still runs when the terminal or curses build refuses mouse reporting, and every action has a keyboard equivalent. Hold Shift or Option to select text while mouse reporting is active.
+- Button-event tracking is requested directly, because several ncurses builds ask the terminal for presses and releases only. Without that request a drag cannot report motion, so highlighting would never grow. Escape sequences that a build does not understand are never requested, and tracking is turned off when the app exits.
 - Language servers and linters run as child processes in the project root. Every request has a timeout, output is capped, and processes are terminated when the session closes.
 - LSP messages are bounded by a header limit, a body limit and a message count, and malformed JSON or an early exit is reported instead of raised.
 - The dev box only reads .fuzzy-surgical/devbox.json or fuzzy-surgical.json from the search root. An invalid entry is skipped with a status message.

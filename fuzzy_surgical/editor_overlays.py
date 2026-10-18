@@ -28,6 +28,7 @@ HELP_LINES = [
     "Selecting and copying",
     "  Mouse drag     highlight text, release to keep the selection",
     "  Right click    Cut, Copy, Paste and more at the pointer",
+    "  F10            same Actions menu, when the terminal eats right clicks",
     "  Double click   select the word under the pointer",
     "  Triple click   select the whole line",
     "  Shift+arrows   extend the selection from the caret",
