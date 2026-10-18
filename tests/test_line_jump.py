@@ -93,6 +93,22 @@ def test_resolver_accepts_path_suffix_and_partial_name():
     assert partial.file_path == str(root / "pkg" / "app_utils.py")
 
 
+def test_resolver_prefers_a_full_path_suffix_over_a_bare_name():
+    root = Path("/root")
+    files = {
+        str(root / "vendor" / "app.py"): [(1, "other")],
+        str(root / "src" / "lib" / "app.py"): [(1, "wanted")],
+    }
+    resolver = LineJumpResolver()
+
+    # Both files are named app.py, but only one matches the typed "lib/app.py"
+    # suffix, so the bare-name file must not win on path length.
+    jump = resolver.resolve(parse_line_reference("lib/app.py:1"), files, root)
+
+    assert jump is not None
+    assert jump.file_path == str(root / "src" / "lib" / "app.py")
+
+
 def test_resolver_clamps_past_the_indexed_end():
     root, files = _file_lines()
 

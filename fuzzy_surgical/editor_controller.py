@@ -115,6 +115,9 @@ class EditorController:
         self.save_error = ""
         self.last_save = None
         self.last_save_line = 0
+        self.saved_proof = ""
+        self.saved_line_number = 0
+        self.saved_edit_count = 0
 
         while True:
             self._draw_editor()
@@ -128,15 +131,8 @@ class EditorController:
                         self.mode = "discard"
                     else:
                         return False
-                elif key in (CTRL_S, CTRL_W):
-                    if self._save_now():
-                        return True
-                elif is_enter(key):
-                    self._save_active_edit()
-                    if self.line_edits:
-                        self.mode = "confirm"
-                    else:
-                        return False
+                elif key in (CTRL_S, CTRL_W) or key == curses.KEY_F2 or is_enter(key):
+                    self._save_and_show_proof()
                 elif key == curses.KEY_UP:
                     self.save_error = ""
                     self._save_active_edit()
@@ -182,18 +178,15 @@ class EditorController:
                         )
                         self.cursor_pos += 1
 
-            elif self.mode == "confirm":
-                if key in ("y", "Y") or is_enter(key):
-                    if self._apply_changes():
-                        return True
-                    continue
-                if key in ("n", "N", curses.ascii.ESC):
-                    return False
+            elif self.mode == "saved":
+                return True
 
             elif self.mode == "discard":
-                if key in ("y", "Y"):
+                if key in ("s", "S"):
+                    self._save_and_show_proof()
+                elif key in ("d", "D"):
                     return False
-                if key in ("n", "N", curses.ascii.ESC):
+                else:
                     self.mode = "edit"
 
             elif self.mode == "help":
@@ -218,6 +211,30 @@ class EditorController:
             self.save_error = "No changes to save. Type an edit first."
             return False
         return self._apply_changes()
+
+    def _save_and_show_proof(self) -> None:
+        """Write the file, then stay on a screen that shows the disk copy."""
+        if self._save_now():
+            self.mode = "saved"
+
+    def _read_disk_line(self, number: int) -> str:
+        """Read one line back from disk, the way another program would."""
+        if number <= 0:
+            return ""
+        try:
+            with open(
+                self.file_path,
+                "r",
+                encoding="utf-8",
+                errors="surrogateescape",
+                newline="",
+            ) as handle:
+                for index, text in enumerate(handle, 1):
+                    if index == number:
+                        return _split_line_ending(text)[0]
+        except OSError:
+            return ""
+        return ""
 
     def _save_active_edit(self) -> None:
         number, original = self.context_lines[self.active_ctx_idx]
@@ -265,8 +282,8 @@ class EditorController:
 
         if self.mode == "edit":
             self._draw_edit_mode(height, width)
-        elif self.mode == "confirm":
-            self._draw_confirm_mode(height, width)
+        elif self.mode == "saved":
+            self._draw_saved_mode(height, width)
         elif self.mode == "discard":
             self._draw_discard_mode(height, width)
         else:
@@ -385,7 +402,7 @@ class EditorController:
                 self.theme.attr("ui.error", bold=True),
             )
         help_text = (
-            f"Enter review  Ctrl+S save now  Esc discard  Up/Down line  F1 help{changed_label}"
+            f"Enter save  F2 save  Esc discard  Up/Down line  F1 help{changed_label}"
         )
         safe_addstr(
             self.stdscr,
@@ -401,7 +418,7 @@ class EditorController:
             self.stdscr,
             2,
             0,
-            f"Discard {pending} unsaved change(s)? y discards, n keeps editing."
+            f"{pending} unsaved change(s). s saves and exits, d discards, Esc keeps editing."
             [: width - 1],
             self.theme.attr("ui.error", bold=True),
         )
@@ -420,64 +437,69 @@ class EditorController:
             self.theme.attr("ui.dim", dim=True),
         )
 
-    def _draw_confirm_mode(self, height: int, width: int) -> None:
-        count = len(self.line_edits)
-        safe_addstr(
-            self.stdscr,
-            2,
-            0,
-            f"Apply {count} change(s)? Enter or y writes, n cancels."[: width - 1],
-            self.theme.attr("ui.accent", bold=True),
+    def _draw_saved_mode(self, height: int, width: int) -> None:
+        """Show the text that was read back from disk after the write."""
+        saved = self.last_save
+        path = saved.path if saved is not None else self.file_path
+        written = f"{saved.bytes_written} bytes" if saved is not None else "written"
+        lines = [
+            "Saved to disk",
+            "",
+            path,
+        ]
+        if saved is not None and saved.requested_path and saved.requested_path != path:
+            lines.extend(["", f"Opened through {saved.requested_path}"])
+        lines.extend(
+            [
+                "",
+                f"Line {self.saved_line_number} now reads on disk:",
+                f"  {sanitize(self.saved_proof)}",
+                "",
+                f"{self.saved_edit_count} line(s) written, {written}, verified",
+                "",
+                "Press any key to return.",
+            ]
         )
-        safe_addstr(
+        box_width = min(width - 2, max(len(line) for line in lines) + 4)
+        box_height = len(lines) + 2
+        top = max(0, (height - box_height) // 2)
+        left = max(0, (width - box_width) // 2)
+        overlay = self.theme.attr("ui.overlay")
+        draw_box(
             self.stdscr,
-            3,
-            0,
-            f"File: {shorten(display_path(Path(self.file_path)), max(10, width - 8))}",
-            self.theme.attr("ui.path"),
+            top,
+            left,
+            box_height,
+            box_width,
+            "Saved",
+            self.theme,
+            overlay,
         )
-        error_row = 4
-        if self.save_error:
+        proof_index = next(
+            (index for index, line in enumerate(lines, 1) if line.startswith("  ")),
+            0,
+        )
+        count_index = next(
+            (index for index, line in enumerate(lines, 1) if "written" in line),
+            0,
+        )
+        for offset, line in enumerate(lines, 1):
+            attr = overlay
+            if offset == 1:
+                attr = self.theme.attr("ui.accent", bold=True)
+            elif offset == 3:
+                attr = self.theme.attr("ui.path")
+            elif offset == proof_index:
+                attr = self.theme.attr("edit.changed", bold=True)
+            elif offset == count_index:
+                attr = self.theme.attr("ui.accent")
             safe_addstr(
                 self.stdscr,
-                error_row,
-                0,
-                self.save_error[: width - 1],
-                self.theme.attr("ui.error", bold=True),
+                top + offset,
+                left + 2,
+                line[: box_width - 4],
+                attr,
             )
-
-        originals = {number: text for number, text in self.context_lines}
-        row = error_row + 1
-        for number in sorted(self.line_edits):
-            if row >= height - 1:
-                break
-            new_text = self.line_edits[number]
-            old_text = originals.get(number, "")
-
-            safe_addstr(
-                self.stdscr,
-                row,
-                0,
-                f"Line {number} - Original:"[: width - 1],
-                self.theme.attr("edit.original", bold=True),
-            )
-            row += 1
-            if row < height - 1:
-                safe_addstr(self.stdscr, row, 2, old_text[: width - 3])
-                row += 1
-
-            if row < height - 1:
-                safe_addstr(
-                    self.stdscr,
-                    row,
-                    0,
-                    f"Line {number} - Modified:"[: width - 1],
-                    self.theme.attr("edit.changed", bold=True),
-                )
-                row += 1
-            if row < height - 1:
-                safe_addstr(self.stdscr, row, 2, new_text[: width - 3])
-                row += 2
 
     def _draw_help_mode(self, height: int, width: int) -> None:
         lines = [
@@ -486,16 +508,16 @@ class EditorController:
             "Home / End     jump to start or end",
             "Delete         remove the character under the cursor",
             "Backspace      delete the previous character",
-            "Enter          review the changes",
-            "Ctrl+S         save without the review step",
+            "Enter          save the edited lines to disk",
+            "F2             also saves",
+            "Ctrl+S         also saves when the terminal delivers it",
             "Ctrl+W         also saves, for terminals with flow control",
-            "Esc            discard, with a confirmation prompt",
+            "Esc            leaves, asking before discarding",
             "F1             close this help",
             "",
             "Modified lines are marked + and shown in green.",
-            "Original text is shown in red before writing.",
-            "After review, Enter or y writes the file.",
-            "The title shows the absolute path that will be written.",
+            "A save reads the file back and shows the disk copy.",
+            "The saved screen shows the absolute path that changed.",
             "",
             "Press any key to return.",
         ]
@@ -569,6 +591,9 @@ class EditorController:
             return False
         self.last_save = result
         self.last_save_line = min(edits) if edits else self.line_num
+        self.saved_line_number = self.last_save_line
+        self.saved_edit_count = len(edits)
+        self.saved_proof = self._read_disk_line(self.last_save_line)
         return True
 
 

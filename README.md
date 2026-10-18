@@ -8,7 +8,7 @@
 
 A terminal fuzzy finder with syntax highlighted results and surgical line replacement.
 
-FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, and replaces a single line only after an explicit review.
+FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, writes an edited line to disk on Enter, and then shows the text read back from the file.
 
 Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 
@@ -25,8 +25,8 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Preview rows scroll horizontally to the matched text instead of showing column zero
 - Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file
 - Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path
-- Surgical line editing with surrounding context and an explicit review step
-- Ctrl+S writes straight from the edit screen, and Esc asks before discarding unsaved changes
+- Surgical line editing with surrounding context and a save that proves the disk copy
+- Enter, F2, Ctrl+S and Ctrl+W write straight from the edit screen, and Esc asks before discarding unsaved changes
 - The editor title and the result header show the absolute path, so duplicate file names in different folders are obvious
 - Go-to-line queries say when several files share the typed name instead of silently choosing one
 - Writes keep the existing inode, so Sublime, less and tail -f see the change immediately
@@ -150,9 +150,10 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Left / Right | Move the cursor. |
 | Home / End | Jump to the start or end of the line. |
 | Backspace / Delete | Edit the line. |
-| Enter | Review the edit, then press Enter or y to write, or n to cancel. |
-| Ctrl+S | Write immediately from the edit screen, skipping the review step. Ctrl+W works as an alias on terminals that capture Ctrl+S for flow control. |
-| Esc | Ask before discarding unsaved changes. |
+| Enter | Save the edited lines to disk immediately, then show the text read back from the file. |
+| F2 | Save as well, for terminals that swallow Ctrl+S. |
+| Ctrl+S | Save immediately. Ctrl+W is an alias when the terminal captures Ctrl+S for flow control. |
+| Esc | Ask before discarding unsaved changes. In that prompt s saves, d discards and Esc keeps editing. |
 | F1 | Show help. |
 
 ## Safety and limits
@@ -166,7 +167,7 @@ The indexer never follows directory symlinks and skips unreadable, binary or ove
 | Lines per file | 5,000 |
 | Lines in total | 500,000 |
 
-- Writes happen only after the review step or an explicit Ctrl+S, keep the existing inode so open editors and pagers see the change, and preserve CRLF endings and a missing final newline.
+- Writes happen only on Enter, F2, Ctrl+S or Ctrl+W, keep the existing inode so open editors and pagers see the change, and preserve CRLF endings and a missing final newline.
 - Every save is read back through both the opened path and the real target before it is reported, and the absolute path is shown in the editor and the status bar.
 - The modification time is nudged forward when the filesystem timestamp resolution is coarse, and the containing directory is synced.
 - If another program rewrites a just saved file, the status bar says so within twenty seconds.

@@ -136,10 +136,10 @@ class LineJumpResolver:
 
             if rel_lower == query or absolute_lower == query:
                 score = EXACT_PATH_SCORE
-            elif query_name and name == query_name:
-                score = BASENAME_SCORE
             elif rel_lower.endswith("/" + query) or absolute_lower.endswith("/" + query):
                 score = SUFFIX_PATH_SCORE
+            elif query_name and name == query_name:
+                score = BASENAME_SCORE
             else:
                 if not allow_fuzzy:
                     continue

@@ -150,3 +150,34 @@ def test_pending_changes_include_the_active_line_and_saved_lines(tmp_path):
 
     editor.line_edits = {2: "two changed"}
     assert editor._pending_count() == 2
+
+
+def test_save_shows_the_line_read_back_from_disk(tmp_path):
+    """The proof screen must show disk text, not the in-memory buffer."""
+    path = tmp_path / "app.py"
+    path.write_text("one\ntwo\nthree\n", encoding="utf-8")
+
+    editor = EditorController()
+    editor.file_path = str(path)
+    editor.line_num = 2
+    editor.context_lines = [(1, "one"), (2, "two"), (3, "three")]
+    editor.active_ctx_idx = 1
+    editor.edited_line = "TWO"
+
+    editor._save_and_show_proof()
+
+    assert editor.mode == "saved"
+    assert editor.saved_line_number == 2
+    assert editor.saved_edit_count == 1
+    assert editor.saved_proof == "TWO"
+
+    # Corrupt the disk copy after the save and read the proof again: it must
+    # come from the file rather than from the edited buffer.
+    path.write_text("one\nEXTERNAL\nthree\n", encoding="utf-8")
+    assert editor._read_disk_line(2) == "EXTERNAL"
+
+
+def test_saved_proof_reports_an_unreadable_line_as_empty(tmp_path):
+    editor = EditorController()
+    editor.file_path = str(tmp_path / "missing.py")
+    assert editor._read_disk_line(1) == ""
