@@ -94,3 +94,25 @@ def test_popup_refine_hides_when_nothing_matches() -> None:
 
     popup.refine("a")
     assert popup.visible is True
+
+
+def test_popup_detail_lines_include_type_and_documentation() -> None:
+    popup = CompletionPopup()
+    popup.open(0, "s", 1)
+    popup.set_result(
+        1,
+        [
+            CompletionItem(
+                "String",
+                "String",
+                kind="class",
+                detail="class java.lang.String",
+                documentation="The String class.\nMore text.",
+            )
+        ],
+    )
+
+    assert popup._detail_lines(60) == [
+        "class java.lang.String",
+        "The String class. More text.",
+    ]

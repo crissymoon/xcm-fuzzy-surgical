@@ -18,6 +18,9 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 SCROLL_LINES = 3
+SCROLL_BURST_LINES = 1
+SCROLL_BURST_GAP = 0.05
+SCROLL_BURST_INTERVAL = 0.07
 DOUBLE_CLICK_SECONDS = 0.45
 DEDUPE_SECONDS = 0.20
 MOUSE_KEY = getattr(curses, "KEY_MOUSE", -1)
@@ -35,6 +38,14 @@ _CLICK_BITS = _bits(
     "BUTTON1_CLICKED",
     "BUTTON1_DOUBLE_CLICKED",
     "BUTTON1_TRIPLE_CLICKED",
+)
+# Horizontal wheel ticks are reported as buttons 2 and 3 by older ncurses
+# builds. They are not clicks and must not move a selection.
+_PRIMARY_CLICK_BITS = _bits("BUTTON1_PRESSED", "BUTTON1_CLICKED")
+# Older ncurses builds report horizontal wheel ticks as buttons 2 and 3. They
+# stay in the mask so the terminal encodes them as themselves instead of a
+# position report, which would otherwise look like wheel down.
+_IGNORED_BUTTON_BITS = _bits(
     "BUTTON2_PRESSED",
     "BUTTON2_CLICKED",
     "BUTTON3_PRESSED",
@@ -84,7 +95,7 @@ def enable_mouse(stdscr) -> bool:
     if not mouse_available():
         return False
 
-    mask = _CLICK_BITS | _SCROLL_UP_BITS | _SCROLL_DOWN_BITS
+    mask = _PRIMARY_CLICK_BITS | _IGNORED_BUTTON_BITS | _SCROLL_UP_BITS | _SCROLL_DOWN_BITS
     if _LEGACY_SCROLL_DOWN:
         # Enabling the position report is safe here because this ncurses build
         # maps wheel down to it and does not switch the terminal into motion
@@ -133,9 +144,9 @@ def event_from_state(x: int, y: int, state: int) -> Optional[MouseEvent]:
         return MouseEvent(x, y, "scroll", -1)
     if _SCROLL_DOWN_BITS and state & _SCROLL_DOWN_BITS:
         return MouseEvent(x, y, "scroll", 1)
-    if _LEGACY_SCROLL_DOWN and (state & _REPORT_BIT) and not (state & _CLICK_BITS):
+    if _LEGACY_SCROLL_DOWN and (state & _REPORT_BIT) and not (state & _PRIMARY_CLICK_BITS):
         return MouseEvent(x, y, "scroll", 1)
-    if state & _CLICK_BITS:
+    if state & _PRIMARY_CLICK_BITS:
         return MouseEvent(x, y, "click")
     return None
 
@@ -149,6 +160,38 @@ def read_mouse(stdscr=None) -> Optional[MouseEvent]:
     except (curses.error, AttributeError):
         return None
     return event_from_state(x, y, state)
+
+
+class ScrollGate:
+    """Convert wheel events into a measured number of rows.
+
+    A mouse wheel sends one event per notch, so each notch moves
+    ``SCROLL_LINES`` rows. A trackpad emits a dense burst and its momentum can
+    send dozens of events per second. Those are limited to one row per
+    interval, which keeps the view gliding instead of racing to the end.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._last = float("-inf")
+        self._next_rapid = float("-inf")
+
+    def lines(self, direction: int, per_notch: int = SCROLL_LINES) -> int:
+        """Return signed rows to move for one wheel event, or 0 to ignore it."""
+        if direction == 0:
+            return 0
+        now = self._clock()
+        gap = now - self._last
+        self._last = now
+        sign = 1 if direction > 0 else -1
+        step = max(1, per_notch)
+        if gap >= SCROLL_BURST_GAP:
+            self._next_rapid = now + SCROLL_BURST_INTERVAL
+            return sign * step
+        if now < self._next_rapid:
+            return 0
+        self._next_rapid = now + SCROLL_BURST_INTERVAL
+        return sign * SCROLL_BURST_LINES
 
 
 class ClickTracker:

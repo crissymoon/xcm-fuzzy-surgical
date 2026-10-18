@@ -11,7 +11,7 @@ import curses.ascii
 from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.file_writer import FileWriteError, WriteResult, write_text
 from fuzzy_surgical.history import SnapshotStore
-from fuzzy_surgical.mouse import MOUSE_KEY, ClickTracker, MouseEvent, read_mouse
+from fuzzy_surgical.mouse import MOUSE_KEY, ClickTracker, MouseEvent, ScrollGate, read_mouse
 from fuzzy_surgical.renderer import (
     draw_box,
     draw_code_line,
@@ -58,6 +58,7 @@ class EditorController:
         self.last_save_line = 0
         self.saved_history_note = ""
         self.click_tracker = ClickTracker()
+        self.scroll_gate = ScrollGate()
         self.ctx_start = 0
         self.visible_ctx_count = 0
         self.edit_row = 0
@@ -271,7 +272,9 @@ class EditorController:
     def _handle_mouse(self, event: MouseEvent) -> None:
         """Move the caret or switch context lines from a click or wheel tick."""
         if event.is_scroll:
-            self._move_context(event.direction)
+            delta = self.scroll_gate.lines(event.direction, 1)
+            if delta:
+                self._move_context(delta)
             return
 
         if event.y == self.edit_row:

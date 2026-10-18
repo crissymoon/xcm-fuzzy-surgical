@@ -27,6 +27,7 @@ class ServerSpec:
     commands: Tuple[Command, ...]
     hint: str = ""
     initialize_timeout: float = 0.0
+    request_timeout: float = 0.0
 
     def available_command(self) -> Optional[Tuple[str, ...]]:
         for command in self.commands:
@@ -93,6 +94,7 @@ DEFAULT_SERVERS: Tuple[ServerSpec, ...] = (
         ),
         hint="brew install jdtls",
         initialize_timeout=45.0,
+        request_timeout=20.0,
     ),
     ServerSpec(
         "clangd",

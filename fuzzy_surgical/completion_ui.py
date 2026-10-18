@@ -87,6 +87,30 @@ class CompletionPopup:
         elif self.selected >= self._scroll + rows:
             self._scroll = self.selected - rows + 1
 
+    def _detail_lines(self, width: int) -> List[str]:
+        """Return up to two lines of type and documentation for the selection."""
+        item = self.selected_item()
+        if item is None:
+            return []
+        parts = []
+        if item.detail.strip():
+            parts.append(item.detail)
+        if item.documentation.strip():
+            text = " ".join(item.documentation.split())
+            if text:
+                parts.append(text)
+        if not parts:
+            parts.append(item.kind)
+        limit = max(8, width - 4)
+        lines = []
+        for part in parts:
+            text = sanitize(part).replace("\n", " ").strip()
+            if text:
+                lines.append(text[:limit])
+            if len(lines) >= 2:
+                break
+        return lines
+
     def draw(
         self,
         win,
@@ -103,11 +127,14 @@ class CompletionPopup:
         if height < 4 or width < MIN_WIDTH:
             return
 
-        available_rows = max(1, min(MAX_VISIBLE, max_rows))
-        rows = min(available_rows, len(self.filtered))
-        box_height = rows + 2
         box_width = min(max_width, width - 2, 76)
         box_width = max(MIN_WIDTH, box_width)
+
+        detail = self._detail_lines(box_width)
+        detail_height = len(detail) + 1 if detail and max_rows >= 6 else 0
+        available_rows = max(1, min(MAX_VISIBLE, max_rows - detail_height))
+        rows = min(available_rows, len(self.filtered))
+        box_height = rows + 2 + detail_height
 
         left = max(0, min(column, width - box_width - 1))
         below = row + 1
@@ -137,13 +164,31 @@ class CompletionPopup:
             active = index == self.selected
             kind = item.kind[:10]
             label = sanitize(item.label)[:name_width].ljust(name_width)
-            detail = sanitize(item.detail)[: max(0, box_width - name_width - 18)]
-            line = f" {label} {kind:<11} {detail}"
+            detail_text = sanitize(item.detail)[: max(0, box_width - name_width - 18)]
+            line = f" {label} {kind:<11} {detail_text}"
             line = line[: box_width - 2].ljust(box_width - 2)
             attr = overlay
             if active:
                 attr = theme.attr("ui.accent", bold=True) | curses.A_REVERSE
             safe_addstr(win, top + offset, left + 1, line, attr)
+
+        if detail_height:
+            separator_row = top + 1 + rows
+            safe_addstr(
+                win,
+                separator_row,
+                left + 1,
+                "-" * (box_width - 2),
+                overlay,
+            )
+            for index, text in enumerate(detail, 1):
+                safe_addstr(
+                    win,
+                    separator_row + index,
+                    left + 2,
+                    text[: max(0, box_width - 4)],
+                    theme.attr("ui.dim", dim=True),
+                )
 
         footer = " Enter/Tab insert  Esc close "
         safe_addstr(

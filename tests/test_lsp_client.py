@@ -113,3 +113,22 @@ def test_client_initializes_completes_and_reports_diagnostics(tmp_path: Path) ->
         client.stop()
 
     assert client.running is False
+
+
+def test_progress_and_language_status_become_activity() -> None:
+    client = LspClient(["unused"], Path("."), "python", name="jdtls")
+
+    assert client.activity == ""
+    client._store_progress(
+        {"kind": "begin", "title": "Importing", "message": "project", "percentage": 40}
+    )
+    assert client.activity == "Importing project 40%"
+
+    client._store_progress({"kind": "end"})
+    assert client.activity == ""
+
+    client._store_status({"type": "Starting", "message": "Booting workspace"})
+    assert client.activity == "Booting workspace"
+
+    client._store_status({"type": "ServiceReady", "message": "Ready"})
+    assert client.activity == ""

@@ -29,7 +29,7 @@ from fuzzy_surgical.lsp.completion import completion_prefix
 from fuzzy_surgical.lsp.protocol import utf16_column
 from fuzzy_surgical.mouse import (
     MOUSE_KEY,
-    SCROLL_LINES,
+    ScrollGate,
     ClickTracker,
     MouseEvent,
     read_mouse,
@@ -120,12 +120,14 @@ class FullEditor:
         self.history_index = 0
         self.history_scroll = 0
         self.click_tracker = ClickTracker()
+        self.scroll_gate = ScrollGate()
         self.completion = CompletionPopup()
         self.diagnostics_panel = DiagnosticPanel()
         self.diagnostics = []
         self.assist_status = ""
         self._completion_due_at = 0.0
         self._completion_manual = False
+        self._completion_pending = False
 
     def edit(self, file_path: Path) -> bool:
         """Open the file and return True when at least one save happened."""
@@ -144,6 +146,7 @@ class FullEditor:
         self.diagnostics = []
         self._completion_due_at = 0.0
         self._completion_manual = False
+        self._completion_pending = False
         if self.devbox is not None:
             self.devbox.open_document(self.path, self.buffer.to_text())
             self.assist_status = _devbox_advice(self.devbox, self.path) or str(
@@ -215,6 +218,7 @@ class FullEditor:
             if kind == "completions":
                 sequence = int(event[1])
                 if self.completion.set_result(sequence, event[2]):
+                    self._completion_pending = False
                     row = self.buffer.cursor_row
                     line = self.buffer.lines[row]
                     start, prefix = completion_prefix(line, self.buffer.cursor_col)
@@ -253,12 +257,14 @@ class FullEditor:
         if self.devbox is None:
             self.notice = "Language server support is off (--no-lsp)."
             self._completion_manual = False
+            self._completion_pending = False
             return
         advice = _devbox_advice(self.devbox, self.path)
         if advice:
             self.notice = advice
             self.assist_status = advice
             self._completion_manual = False
+            self._completion_pending = False
             return
         row = self.buffer.cursor_row
         line = self.buffer.lines[row]
@@ -268,15 +274,22 @@ class FullEditor:
         )
         if sequence:
             self.completion.open(start, prefix, sequence)
+            self._completion_pending = True
         else:
+            self._completion_pending = False
             self._report_no_completions()
 
     def _report_no_completions(self) -> None:
+        self._completion_pending = False
         advice = _devbox_advice(self.devbox, self.path) if self.devbox is not None else ""
         if advice:
             self.notice = advice
         elif self._completion_manual:
-            self.notice = "No completions returned for this position."
+            message = "No completions returned for this position."
+            error = self.devbox.client_error if self.devbox is not None else ""
+            if error:
+                message = f"{message} ({error})"
+            self.notice = message
         self._completion_manual = False
 
     def _after_edit(self) -> None:
@@ -341,7 +354,7 @@ class FullEditor:
                 self.diagnostics_panel.close()
                 return False
 
-        if key in (CTRL_SPACE, CTRL_N):
+        if key in (CTRL_SPACE, CTRL_N) or key == curses.KEY_F12:
             self._completion_manual = True
             self._request_completion()
             return False
@@ -447,13 +460,14 @@ class FullEditor:
             self.x_offset = 0
 
     def _scroll_mouse(self, direction: int) -> None:
-        if direction == 0:
+        delta = self.scroll_gate.lines(direction)
+        if delta == 0:
             return
         if self.mode == "edit":
-            self.buffer.move_page(direction * SCROLL_LINES)
+            self.buffer.move_page(delta)
             self._after_cursor_move()
         elif self.mode == "history":
-            self._select_history(self.history_index + direction * SCROLL_LINES)
+            self._select_history(self.history_index + delta)
 
     def _gutter_width(self) -> int:
         number_width = max(3, len(str(self.buffer.line_count)))
@@ -710,7 +724,7 @@ class FullEditor:
             1,
             0,
             "Ctrl+S save  F2 save  F6 snapshots  F8 reload  "
-            "^Space complete  F9 issues  F1 help"[: width - 1],
+            "^N complete  F9 issues  F1 help"[: width - 1],
             self.theme.attr("ui.dim", dim=True),
         )
 
@@ -803,6 +817,8 @@ class FullEditor:
         left = f" Esc back  {state} "
         if self.assist_status:
             left += f" {self.assist_status} "
+        if self._completion_pending and self.completion.requested:
+            left += " waiting for completions "
         right = f" {self.buffer.cursor_row + 1}/{self.buffer.line_count} "
         if width < 64:
             left = " Ctrl+S save  Esc back "
@@ -918,7 +934,7 @@ class FullEditor:
             "  Home / End     start or end of line",
             "  PgUp / PgDn    move one page",
             "  Mouse click    place the cursor at the clicked cell",
-            "  Mouse wheel    scroll three lines",
+            "  Mouse wheel    scroll a few lines, trackpads glide",
             "",
             "Editing",
             "  Enter          split the line",
@@ -929,7 +945,7 @@ class FullEditor:
             "  Ctrl+Y         redo",
             "",
             "Dev box (language server and linters)",
-            "  Ctrl+Space     request completions now (Ctrl+N also works)",
+            "  Ctrl+N         request completions now (F12 and Ctrl+Space too)",
             "  typing         suggestions appear after two characters",
             "  Up / Down      choose a suggestion, Enter or Tab inserts",
             "  Esc            close the suggestion list without inserting",

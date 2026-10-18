@@ -12,7 +12,7 @@ from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.directory_navigator import DirEntry, DirectoryNavigator
 from fuzzy_surgical.mouse import (
     MOUSE_KEY,
-    SCROLL_LINES,
+    ScrollGate,
     ClickTracker,
     MouseEvent,
     read_mouse,
@@ -45,6 +45,7 @@ class DirectoryPicker:
         self.scroll = 0
         self.entries: List[DirEntry] = []
         self.click_tracker = ClickTracker()
+        self.scroll_gate = ScrollGate()
         self._refresh()
 
     def run(self) -> Optional[Path]:
@@ -137,7 +138,9 @@ class DirectoryPicker:
 
     def _handle_mouse(self, event: MouseEvent) -> Optional[Path]:
         if event.is_scroll:
-            self._move(event.direction * SCROLL_LINES)
+            delta = self.scroll_gate.lines(event.direction)
+            if delta:
+                self._move(delta)
             return None
         top = 4
         offset = event.y - top

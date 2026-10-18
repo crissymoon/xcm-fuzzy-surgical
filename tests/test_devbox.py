@@ -107,3 +107,29 @@ def test_lint_worker_publishes_diagnostics(tmp_path: Path, monkeypatch) -> None:
         assert session.diagnostics_for(str(target))[0].source == "fake"
     finally:
         session.close()
+
+
+def test_devbox_reports_language_server_activity(tmp_path: Path) -> None:
+    class FakeClient:
+        name = "jdtls"
+        running = True
+        error = ""
+        activity = "Importing project 40%"
+
+        def diagnostics_for(self, path):
+            return []
+
+        def stop(self):
+            return None
+
+    session = DevBoxSession(tmp_path, enable_lsp=False, enable_linters=False)
+    try:
+        session._client = FakeClient()
+        events = session.poll()
+        assert ("status", "LSP jdtls: Importing project 40%") in events
+
+        session._client.activity = ""
+        events = session.poll()
+        assert ("status", "LSP jdtls") in events
+    finally:
+        session.close()

@@ -12,6 +12,7 @@ import os
 import queue
 import subprocess
 import threading
+import time
 from collections import deque
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional, Sequence
@@ -63,6 +64,8 @@ class LspClient:
 
         self.error = ""
         self.last_message = ""
+        self.progress_text = ""
+        self._last_message_at = 0.0
         self._process: Optional[subprocess.Popen] = None
         self._reader: Optional[threading.Thread] = None
         self._stderr_reader: Optional[threading.Thread] = None
@@ -85,6 +88,15 @@ class LspClient:
             and self._process.poll() is None
             and not self._closed.is_set()
         )
+
+    @property
+    def activity(self) -> str:
+        """What the server is doing right now, for the editor status bar."""
+        if self.progress_text:
+            return self.progress_text
+        if self.last_message and time.monotonic() - self._last_message_at <= 8.0:
+            return self.last_message
+        return ""
 
     @property
     def status(self) -> str:
@@ -399,6 +411,46 @@ class LspClient:
         elif method in ("window/showMessage", "window/logMessage"):
             if isinstance(params, dict) and isinstance(params.get("message"), str):
                 self.last_message = params["message"][:500]
+                self._last_message_at = time.monotonic()
+        elif method == "$/progress" and isinstance(params, dict):
+            self._store_progress(params.get("value"))
+        elif method == "language/status" and isinstance(params, dict):
+            self._store_status(params)
+
+    def _store_progress(self, value: Any) -> None:
+        """Keep the newest work-done progress text from the server."""
+        if not isinstance(value, dict):
+            return
+        kind = value.get("kind")
+        if kind == "end":
+            self.progress_text = ""
+            return
+        if kind not in ("begin", "report"):
+            return
+        parts = []
+        title = value.get("title")
+        if isinstance(title, str) and title:
+            parts.append(title)
+        message = value.get("message")
+        if isinstance(message, str) and message:
+            parts.append(message)
+        percentage = value.get("percentage")
+        if isinstance(percentage, (int, float)):
+            parts.append(f"{int(percentage)}%")
+        text = " ".join(parts).strip()
+        if text:
+            self.progress_text = text[:160]
+
+    def _store_status(self, params: dict) -> None:
+        """Surface jdtls style language/status messages while it starts."""
+        message = params.get("message")
+        if not isinstance(message, str) or not message.strip():
+            return
+        state = str(params.get("type") or "").lower()
+        if state in ("serviceready", "ready", "idle"):
+            self.progress_text = ""
+            return
+        self.progress_text = message.strip()[:160]
 
     def _answer_request(self, message: dict) -> None:
         """Answer a server to client request with a usable result.

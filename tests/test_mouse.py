@@ -23,7 +23,7 @@ class FakeScreen:
 
 
 def test_click_and_wheel_states_become_events(monkeypatch) -> None:
-    monkeypatch.setattr(mouse, "_CLICK_BITS", 0x01)
+    monkeypatch.setattr(mouse, "_PRIMARY_CLICK_BITS", 0x01)
     monkeypatch.setattr(mouse, "_SCROLL_UP_BITS", 0x02)
     monkeypatch.setattr(mouse, "_SCROLL_DOWN_BITS", 0x04)
     monkeypatch.setattr(mouse, "_REPORT_BIT", 0x08)
@@ -43,7 +43,7 @@ def test_click_and_wheel_states_become_events(monkeypatch) -> None:
 
 
 def test_old_ncurses_wheel_down_is_a_position_report(monkeypatch) -> None:
-    monkeypatch.setattr(mouse, "_CLICK_BITS", 0x01)
+    monkeypatch.setattr(mouse, "_PRIMARY_CLICK_BITS", 0x01)
     monkeypatch.setattr(mouse, "_SCROLL_UP_BITS", 0x02)
     monkeypatch.setattr(mouse, "_SCROLL_DOWN_BITS", 0)
     monkeypatch.setattr(mouse, "_REPORT_BIT", 0x08)
@@ -177,3 +177,34 @@ def test_search_view_double_click_opens_the_editor(monkeypatch) -> None:
     now[0] = 0.3
     controller._handle_mouse()
     assert opened == [True]
+
+
+def test_horizontal_wheel_ticks_are_not_clicks() -> None:
+    import curses
+
+    for name in ("BUTTON2_PRESSED", "BUTTON3_PRESSED"):
+        state = int(getattr(curses, name, 0))
+        if state:
+            assert mouse.event_from_state(1, 1, state) is None
+
+
+def test_scroll_gate_limits_a_trackpad_burst() -> None:
+    now = [0.0]
+    gate = mouse.ScrollGate(clock=lambda: now[0])
+
+    assert gate.lines(1) == mouse.SCROLL_LINES
+    for step in range(1, 9):
+        now[0] = step * 0.008
+        assert gate.lines(1) == 0
+    now[0] = 0.072
+    assert gate.lines(1) == mouse.SCROLL_BURST_LINES
+    assert gate.lines(0) == 0
+
+
+def test_scroll_gate_uses_one_row_per_notch_when_asked() -> None:
+    now = [0.0]
+    gate = mouse.ScrollGate(clock=lambda: now[0])
+
+    assert gate.lines(-1, 1) == -1
+    now[0] = 1.0
+    assert gate.lines(1, 1) == 1

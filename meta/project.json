@@ -2,7 +2,7 @@
   "schema_version": 1,
   "name": "fuzzy-surgical",
   "display_name": "FuzzySurgical",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "tagline": "A terminal fuzzy finder with syntax highlighted results, surgical line replacement, a file browser and LSP completion.",
   "summary": "FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, writes an edited line to disk on Enter, and then shows the text read back from the file. F3 opens a safe file browser, F4 opens the selected file in a whole-file editor, and every save can store the previous version in a local SQLite database for recovery. The editor speaks the Language Server Protocol for completion and diagnostics, and an optional dev box file adds project linters.",
   "author": {
@@ -20,7 +20,10 @@
   },
   "python": {
     "requires": "3.9",
-    "tested": ["3.9", "3.12"]
+    "tested": [
+      "3.9",
+      "3.12"
+    ]
   },
   "platforms": {
     "intro": "Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.",
@@ -44,7 +47,7 @@
     "Syntax highlighted results and editor context with a fallback highlighter when Pygments is unavailable",
     "Preview rows scroll horizontally to the matched text instead of showing column zero",
     "Mouse clicks select result and browser rows, place the caret at the clicked cell in both editors, and double clicks open the selected item",
-    "Wheel and trackpad scrolling works in the result list, directory picker, file browser and both editors, including the older ncurses wheel-down encoding used by macOS",
+    "Wheel and trackpad scrolling works in the result list, directory picker, file browser and both editors, including the older ncurses wheel-down encoding used by macOS; trackpad momentum is throttled so the view glides instead of jumping to the end",
     "Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file",
     "Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path",
     "Surgical line editing with surrounding context and a save that proves the disk copy",
@@ -64,7 +67,8 @@
     "LSP completion in the full editor through any installed server: pylsp, pyright, typescript-language-server, gopls, rust-analyzer, jdtls, clangd, bash-language-server, lua-language-server, solargraph or intelephense",
     "Python servers and linters installed inside the project virtual environment are found through the running interpreter, not only through PATH",
     "Java files use Eclipse JDT Language Server, detected from PATH, Homebrew or the redhat.java VS Code extension, with a longer initialize timeout",
-    "Ctrl+Space requests completions, typing identifier characters suggests after a short delay, and Enter or Tab inserts a plain text item",
+    "Ctrl+N or F12 requests completions, typing identifier characters suggests after a short delay, and Enter or Tab inserts a plain text item",
+    "The completion popup shows the selected item's type and documentation, and the status bar shows language server progress such as project import while a server is still loading",
     "When completion does nothing the status bar names the missing server and the install command, and --lsp-doctor prints every tool it can and cannot run",
     "Linters run in a separate worker after open and save: ruff, flake8, pyflakes, eslint, shellcheck, ruby -c, php -l and gofmt",
     "F9 lists merged language server and linter diagnostics, and Enter jumps to the reported line",
@@ -79,7 +83,10 @@
         "id": "posix",
         "title": "Linux, macOS, WSL and Git Bash",
         "language": "bash",
-        "commands": ["./install.sh", "fuzzy-surgical"],
+        "commands": [
+          "./install.sh",
+          "fuzzy-surgical"
+        ],
         "notes": [
           "The installer writes a launcher, usually to $HOME/.local/bin, and adds that directory to your shell PATH.",
           "Open a new terminal after installing so the updated PATH is visible."
@@ -118,7 +125,10 @@
         "id": "pipx",
         "title": "pipx or pip",
         "language": "bash",
-        "commands": ["pipx install .", "fuzzy-surgical"],
+        "commands": [
+          "pipx install .",
+          "fuzzy-surgical"
+        ],
         "notes": [
           "The package exposes the fuzzy-surgical console script. Use python -m pip install . inside a virtual environment if pipx is unavailable."
         ],
@@ -137,7 +147,10 @@
         "id": "source",
         "title": "Run without installing",
         "language": "bash",
-        "commands": ["python3 main.py", "python3 main.py ~/projects"],
+        "commands": [
+          "python3 main.py",
+          "python3 main.py ~/projects"
+        ],
         "notes": [
           "Install requirements.txt first. main.py is a thin launcher over the fuzzy_surgical package."
         ],
@@ -157,110 +170,358 @@
   },
   "cli": {
     "intro": "Every flag has a safe default, so positional arguments are enough for normal use.",
-    "columns": ["Flag", "Value", "Description"],
+    "columns": [
+      "Flag",
+      "Value",
+      "Description"
+    ],
     "rows": [
-      ["directory", "PATH", "Directory to search. Omit it to choose a directory in the TUI."],
-      ["-i, --ignore", "PATTERN ...", "Directory names or glob patterns to skip while indexing."],
-      ["-e, --extensions", "EXT ...", "Only index these file extensions, for example .py or py."],
-      ["--no-picker", "none", "Skip the picker and search the current directory."],
-      ["--no-history", "none", "Do not store SQLite snapshots of edited files."],
-      ["--history-db", "PATH", "Use a different SQLite history database."],
-      ["--history-limit", "INT", "Snapshots kept per file. Default 25."],
-      ["--devbox", "PATH", "Dev box JSON file or project directory. Defaults to .fuzzy-surgical/devbox.json in the search root."],
-      ["--no-lsp", "none", "Disable language server completion and diagnostics."],
-      ["--no-linters", "none", "Disable background linter runs."],
-      ["--lsp-doctor", "none", "Print every language server and linter with its detection state, then exit. Nothing is installed."],
-      ["--version", "none", "Print the installed version and exit."],
-      ["--max-files", "INT", "Maximum number of files to index. Default 8000."],
-      ["--max-file-size", "INT", "Maximum bytes read per file. Default 1000000."],
-      ["--max-lines-per-file", "INT", "Maximum lines indexed per file. Default 5000."],
-      ["--max-total-lines", "INT", "Maximum lines indexed in total. Default 500000."]
+      [
+        "directory",
+        "PATH",
+        "Directory to search. Omit it to choose a directory in the TUI."
+      ],
+      [
+        "-i, --ignore",
+        "PATTERN ...",
+        "Directory names or glob patterns to skip while indexing."
+      ],
+      [
+        "-e, --extensions",
+        "EXT ...",
+        "Only index these file extensions, for example .py or py."
+      ],
+      [
+        "--no-picker",
+        "none",
+        "Skip the picker and search the current directory."
+      ],
+      [
+        "--no-history",
+        "none",
+        "Do not store SQLite snapshots of edited files."
+      ],
+      [
+        "--history-db",
+        "PATH",
+        "Use a different SQLite history database."
+      ],
+      [
+        "--history-limit",
+        "INT",
+        "Snapshots kept per file. Default 25."
+      ],
+      [
+        "--devbox",
+        "PATH",
+        "Dev box JSON file or project directory. Defaults to .fuzzy-surgical/devbox.json in the search root."
+      ],
+      [
+        "--no-lsp",
+        "none",
+        "Disable language server completion and diagnostics."
+      ],
+      [
+        "--no-linters",
+        "none",
+        "Disable background linter runs."
+      ],
+      [
+        "--lsp-doctor",
+        "none",
+        "Print every language server and linter with its detection state, then exit. Nothing is installed."
+      ],
+      [
+        "--version",
+        "none",
+        "Print the installed version and exit."
+      ],
+      [
+        "--max-files",
+        "INT",
+        "Maximum number of files to index. Default 8000."
+      ],
+      [
+        "--max-file-size",
+        "INT",
+        "Maximum bytes read per file. Default 1000000."
+      ],
+      [
+        "--max-lines-per-file",
+        "INT",
+        "Maximum lines indexed per file. Default 5000."
+      ],
+      [
+        "--max-total-lines",
+        "INT",
+        "Maximum lines indexed in total. Default 500000."
+      ]
     ]
   },
   "controls": [
     {
       "view": "Search",
       "items": [
-        ["Type", "Fuzzy search every indexed line. Literal hits rank first and previews scroll to the match."],
-        ["file.py:12", "Jump to line 12 in a matching file. Partial paths, bare file names and Windows paths work. If several files share the name, the status bar names the chosen file and asks for a folder."],
-        ["Up / Down", "Move the selection one row."],
-        ["Page Up / Page Down", "Move the selection one page."],
-        ["Mouse click", "Select a row. Double click opens the line editor."],
-        ["Mouse wheel / trackpad", "Scroll three rows."],
-        ["Left / Right", "Scroll long code lines horizontally."],
-        ["Enter", "Edit the selected line after reloading it from disk."],
-        ["F3", "Browse folders and edit whole files."],
-        ["F4", "Open the selected file in the whole-file editor."],
-        ["F2", "Open the directory picker."],
-        ["F5", "Reload the whole index, for example after a branch switch."],
-        ["F1", "Show help."],
-        ["Ctrl+U", "Clear the search."],
-        ["Esc", "Clear the search, then quit when the search is already empty."],
-        ["Ctrl+X / F10", "Quit."]
+        [
+          "Type",
+          "Fuzzy search every indexed line. Literal hits rank first and previews scroll to the match."
+        ],
+        [
+          "file.py:12",
+          "Jump to line 12 in a matching file. Partial paths, bare file names and Windows paths work. If several files share the name, the status bar names the chosen file and asks for a folder."
+        ],
+        [
+          "Up / Down",
+          "Move the selection one row."
+        ],
+        [
+          "Page Up / Page Down",
+          "Move the selection one page."
+        ],
+        [
+          "Mouse click",
+          "Select a row. Double click opens the line editor."
+        ],
+        [
+          "Mouse wheel / trackpad",
+          "Scroll three rows per mouse notch, with trackpad momentum throttled."
+        ],
+        [
+          "Left / Right",
+          "Scroll long code lines horizontally."
+        ],
+        [
+          "Enter",
+          "Edit the selected line after reloading it from disk."
+        ],
+        [
+          "F3",
+          "Browse folders and edit whole files."
+        ],
+        [
+          "F4",
+          "Open the selected file in the whole-file editor."
+        ],
+        [
+          "F2",
+          "Open the directory picker."
+        ],
+        [
+          "F5",
+          "Reload the whole index, for example after a branch switch."
+        ],
+        [
+          "F1",
+          "Show help."
+        ],
+        [
+          "Ctrl+U",
+          "Clear the search."
+        ],
+        [
+          "Esc",
+          "Clear the search, then quit when the search is already empty."
+        ],
+        [
+          "Ctrl+X / F10",
+          "Quit."
+        ]
       ]
     },
     {
       "view": "Directory picker",
       "items": [
-        ["Type", "Fuzzy filter directories."],
-        ["Up / Down", "Move the selection."],
-        ["Mouse click", "Select a folder. Double click opens it."],
-        ["Mouse wheel / trackpad", "Scroll three rows."],
-        ["Enter", "Open the selected folder or start searching the current folder."],
-        ["Backspace", "Delete filter text, or move to the parent directory when the filter is empty."],
-        ["Esc", "Cancel and return to the previous view."]
+        [
+          "Type",
+          "Fuzzy filter directories."
+        ],
+        [
+          "Up / Down",
+          "Move the selection."
+        ],
+        [
+          "Mouse click",
+          "Select a folder. Double click opens it."
+        ],
+        [
+          "Mouse wheel / trackpad",
+          "Scroll three rows per mouse notch, with trackpad momentum throttled."
+        ],
+        [
+          "Enter",
+          "Open the selected folder or start searching the current folder."
+        ],
+        [
+          "Backspace",
+          "Delete filter text, or move to the parent directory when the filter is empty."
+        ],
+        [
+          "Esc",
+          "Cancel and return to the previous view."
+        ]
       ]
     },
     {
       "view": "File browser",
       "items": [
-        ["F3", "Open the browser from the search view."],
-        ["Type", "Fuzzy filter the current folder."],
-        ["Up / Down", "Move the selection."],
-        ["Mouse click", "Select a row. Double click opens a folder or edits the file."],
-        ["Mouse wheel / trackpad", "Scroll three rows."],
-        ["Enter", "Open a folder or edit the selected file in the full editor."],
-        ["Backspace", "Delete filter text, or move to the parent folder when the filter is empty."],
-        ["Ctrl+U", "Clear the filter."],
-        ["Esc", "Return to the search view."]
+        [
+          "F3",
+          "Open the browser from the search view."
+        ],
+        [
+          "Type",
+          "Fuzzy filter the current folder."
+        ],
+        [
+          "Up / Down",
+          "Move the selection."
+        ],
+        [
+          "Mouse click",
+          "Select a row. Double click opens a folder or edits the file."
+        ],
+        [
+          "Mouse wheel / trackpad",
+          "Scroll three rows per mouse notch, with trackpad momentum throttled."
+        ],
+        [
+          "Enter",
+          "Open a folder or edit the selected file in the full editor."
+        ],
+        [
+          "Backspace",
+          "Delete filter text, or move to the parent folder when the filter is empty."
+        ],
+        [
+          "Ctrl+U",
+          "Clear the filter."
+        ],
+        [
+          "Esc",
+          "Return to the search view."
+        ]
       ]
     },
     {
       "view": "Full file editor",
       "items": [
-        ["F4", "Open the selected file straight from the search view."],
-        ["Arrows / Home / End", "Move the cursor, wrapping between lines."],
-        ["Page Up / Page Down", "Move one page."],
-        ["Mouse click", "Place the cursor at the clicked cell."],
-        ["Mouse wheel / trackpad", "Scroll three lines."],
-        ["Enter", "Split the current line."],
-        ["Backspace / Delete", "Delete backwards or forwards, joining lines at the edges."],
-        ["Tab", "Insert four spaces."],
-        ["Ctrl+Z / Ctrl+Y", "Undo and redo."],
-        ["Ctrl+Space", "Request completions from the language server. Ctrl+N also works. Typing two identifier characters suggests automatically."],
-        ["Up / Down (completions)", "Choose a suggestion. Enter or Tab inserts it, Esc closes the list."],
-        ["F9", "Show merged language server and linter issues. Ctrl+L also works. Up / Down select, Enter jumps, F9 closes."],
-        ["Ctrl+S / F2", "Write and verify the disk copy, after storing the previous version in SQLite."],
-        ["F6", "List SQLite snapshots. Enter loads one into the buffer as unsaved text."],
-        ["F8", "Reload the file from disk."],
-        ["Esc", "Ask before discarding unsaved changes."],
-        ["F1", "Show help."]
+        [
+          "F4",
+          "Open the selected file straight from the search view."
+        ],
+        [
+          "Arrows / Home / End",
+          "Move the cursor, wrapping between lines."
+        ],
+        [
+          "Page Up / Page Down",
+          "Move one page."
+        ],
+        [
+          "Mouse click",
+          "Place the cursor at the clicked cell."
+        ],
+        [
+          "Mouse wheel / trackpad",
+          "Scroll three lines per mouse notch. Rapid trackpad events are throttled to one row at a time."
+        ],
+        [
+          "Enter",
+          "Split the current line."
+        ],
+        [
+          "Backspace / Delete",
+          "Delete backwards or forwards, joining lines at the edges."
+        ],
+        [
+          "Tab",
+          "Insert four spaces."
+        ],
+        [
+          "Ctrl+Z / Ctrl+Y",
+          "Undo and redo."
+        ],
+        [
+          "Ctrl+N",
+          "Request completions from the language server. F12 and Ctrl+Space also work. Typing two identifier characters suggests automatically. The popup shows the selected item's type and documentation, and the status bar shows server progress."
+        ],
+        [
+          "Up / Down (completions)",
+          "Choose a suggestion. Enter or Tab inserts it, Esc closes the list."
+        ],
+        [
+          "F9",
+          "Show merged language server and linter issues. Ctrl+L also works. Up / Down select, Enter jumps, F9 closes."
+        ],
+        [
+          "Ctrl+S / F2",
+          "Write and verify the disk copy, after storing the previous version in SQLite."
+        ],
+        [
+          "F6",
+          "List SQLite snapshots. Enter loads one into the buffer as unsaved text."
+        ],
+        [
+          "F8",
+          "Reload the file from disk."
+        ],
+        [
+          "Esc",
+          "Ask before discarding unsaved changes."
+        ],
+        [
+          "F1",
+          "Show help."
+        ]
       ]
     },
     {
       "view": "Line editor",
       "items": [
-        ["Up / Down", "Switch the active context line."],
-        ["Mouse click", "Place the caret in the edit line, or switch the context line."],
-        ["Mouse wheel / trackpad", "Move the active context line by one."],
-        ["Left / Right", "Move the cursor."],
-        ["Home / End", "Jump to the start or end of the line."],
-        ["Backspace / Delete", "Edit the line."],
-        ["Enter", "Save the edited lines to disk immediately, then show the text read back from the file."],
-        ["F2", "Save as well, for terminals that swallow Ctrl+S."],
-        ["Ctrl+S", "Save immediately. Ctrl+W is an alias when the terminal captures Ctrl+S for flow control."],
-        ["Esc", "Ask before discarding unsaved changes. In that prompt s saves, d discards and Esc keeps editing."],
-        ["F1", "Show help."]
+        [
+          "Up / Down",
+          "Switch the active context line."
+        ],
+        [
+          "Mouse click",
+          "Place the caret in the edit line, or switch the context line."
+        ],
+        [
+          "Mouse wheel / trackpad",
+          "Move the active context line by one. Rapid trackpad events are throttled."
+        ],
+        [
+          "Left / Right",
+          "Move the cursor."
+        ],
+        [
+          "Home / End",
+          "Jump to the start or end of the line."
+        ],
+        [
+          "Backspace / Delete",
+          "Edit the line."
+        ],
+        [
+          "Enter",
+          "Save the edited lines to disk immediately, then show the text read back from the file."
+        ],
+        [
+          "F2",
+          "Save as well, for terminals that swallow Ctrl+S."
+        ],
+        [
+          "Ctrl+S",
+          "Save immediately. Ctrl+W is an alias when the terminal captures Ctrl+S for flow control."
+        ],
+        [
+          "Esc",
+          "Ask before discarding unsaved changes. In that prompt s saves, d discards and Esc keeps editing."
+        ],
+        [
+          "F1",
+          "Show help."
+        ]
       ]
     }
   ],
@@ -291,17 +552,61 @@
       "}"
     ],
     "servers": [
-      ["Python", "pylsp, pyright-langserver, basedpyright-langserver", "ruff, flake8, pyflakes"],
-      ["Java", "jdtls", "none built in"],
-      ["TypeScript", "typescript-language-server", "eslint"],
-      ["JavaScript", "typescript-language-server", "eslint"],
-      ["Go", "gopls", "gofmt -e"],
-      ["Rust", "rust-analyzer", "none built in"],
-      ["C and C++", "clangd", "none built in"],
-      ["Shell", "bash-language-server", "shellcheck"],
-      ["Lua", "lua-language-server", "none built in"],
-      ["Ruby", "solargraph", "ruby -c"],
-      ["PHP", "intelephense", "php -l"]
+      [
+        "Python",
+        "pylsp, pyright-langserver, basedpyright-langserver",
+        "ruff, flake8, pyflakes"
+      ],
+      [
+        "Java",
+        "jdtls",
+        "none built in"
+      ],
+      [
+        "TypeScript",
+        "typescript-language-server",
+        "eslint"
+      ],
+      [
+        "JavaScript",
+        "typescript-language-server",
+        "eslint"
+      ],
+      [
+        "Go",
+        "gopls",
+        "gofmt -e"
+      ],
+      [
+        "Rust",
+        "rust-analyzer",
+        "none built in"
+      ],
+      [
+        "C and C++",
+        "clangd",
+        "none built in"
+      ],
+      [
+        "Shell",
+        "bash-language-server",
+        "shellcheck"
+      ],
+      [
+        "Lua",
+        "lua-language-server",
+        "none built in"
+      ],
+      [
+        "Ruby",
+        "solargraph",
+        "ruby -c"
+      ],
+      [
+        "PHP",
+        "intelephense",
+        "php -l"
+      ]
     ],
     "notes": [
       "Ctrl+Space requests completions in the full editor. Typing two identifier characters also suggests after a short delay.",
@@ -318,10 +623,22 @@
   "safety": {
     "intro": "The indexer never follows directory symlinks and skips unreadable, binary or oversized paths instead of aborting. Indexing is capped so opening a large folder cannot exhaust memory:",
     "limits": [
-      ["Files", "8,000"],
-      ["Bytes per file", "1,000,000"],
-      ["Lines per file", "5,000"],
-      ["Lines in total", "500,000"]
+      [
+        "Files",
+        "8,000"
+      ],
+      [
+        "Bytes per file",
+        "1,000,000"
+      ],
+      [
+        "Lines per file",
+        "5,000"
+      ],
+      [
+        "Lines in total",
+        "500,000"
+      ]
     ],
     "notes": [
       "Writes happen only on an explicit save key, keep the existing inode so open editors and pagers see the change, and preserve CRLF endings and a missing final newline.",
@@ -390,11 +707,26 @@
     ]
   },
   "requirements": [
-    ["Python", "3.9 or newer"],
-    ["Pygments", "2.15 or newer, used for syntax highlighting"],
-    ["curses", "Included with Python on Linux and macOS. Install windows-curses on Windows."],
-    ["Language server", "Optional. Any LSP server on PATH that speaks stdio, such as pylsp, pyright, gopls or clangd."],
-    ["Linters", "Optional. Any of ruff, flake8, pyflakes, eslint, shellcheck, ruby, php or gofmt on PATH."]
+    [
+      "Python",
+      "3.9 or newer"
+    ],
+    [
+      "Pygments",
+      "2.15 or newer, used for syntax highlighting"
+    ],
+    [
+      "curses",
+      "Included with Python on Linux and macOS. Install windows-curses on Windows."
+    ],
+    [
+      "Language server",
+      "Optional. Any LSP server on PATH that speaks stdio, such as pylsp, pyright, gopls or clangd."
+    ],
+    [
+      "Linters",
+      "Optional. Any of ruff, flake8, pyflakes, eslint, shellcheck, ruby, php or gofmt on PATH."
+    ]
   ],
   "community": {
     "intro": "Issues and pull requests are welcome at the repository. Keep changes focused, add tests for behavior changes, run the checks above, and regenerate the README when metadata changes.",

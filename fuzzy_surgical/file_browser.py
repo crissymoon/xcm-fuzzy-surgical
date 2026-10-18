@@ -20,7 +20,7 @@ from fuzzy_surgical.full_editor import EditorOpenError, FullEditor
 from fuzzy_surgical.history import SnapshotStore
 from fuzzy_surgical.mouse import (
     MOUSE_KEY,
-    SCROLL_LINES,
+    ScrollGate,
     ClickTracker,
     MouseEvent,
     read_mouse,
@@ -73,6 +73,7 @@ class FileBrowser:
         self.help_visible = False
         self.changed_path = ""
         self.click_tracker = ClickTracker()
+        self.scroll_gate = ScrollGate()
         self._refresh()
 
     def run(self) -> Optional[str]:
@@ -196,7 +197,9 @@ class FileBrowser:
 
     def _handle_mouse(self, event: MouseEvent) -> None:
         if event.is_scroll:
-            self._move(event.direction * SCROLL_LINES)
+            delta = self.scroll_gate.lines(event.direction)
+            if delta:
+                self._move(delta)
             return
         top = 4
         offset = event.y - top

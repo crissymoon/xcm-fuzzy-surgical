@@ -198,6 +198,7 @@ class DevBoxSession:
         self._failed_at = 0.0
         self._status = "dev box idle"
         self._last_status_emitted = ""
+        self._last_activity = ""
         self._closed = False
         self._worker.start()
         self._lint_worker.start()
@@ -218,6 +219,12 @@ class DevBoxSession:
     def status(self) -> str:
         with self._state_lock:
             return self._status
+
+    @property
+    def client_error(self) -> str:
+        """Last error reported by the active language server, if any."""
+        client = self._client
+        return client.error if client is not None else ""
 
     @property
     def config_path(self) -> str:
@@ -270,8 +277,15 @@ class DevBoxSession:
     def poll(self) -> List[Event]:
         """Drain queued events and refresh language server diagnostics."""
         client = self._client
-        if client is not None and not client.running and client.error:
-            self._set_status(client.status)
+        if client is not None:
+            if not client.running and client.error:
+                self._set_status(client.status)
+            elif client.running:
+                activity = client.activity
+                if activity != self._last_activity:
+                    self._last_activity = activity
+                    suffix = f": {activity}" if activity else ""
+                    self._set_status(f"LSP {client.name}{suffix}")
         self._refresh_lsp_diagnostics()
         events: List[Event] = []
         while len(events) < 100:
@@ -395,7 +409,7 @@ class DevBoxSession:
             self.root,
             spec.language_id,
             name=spec.name,
-            timeout=self.config.lsp_timeout,
+            timeout=spec.request_timeout or self.config.lsp_timeout,
             initialize_timeout=max(self.config.initialize_timeout, spec.initialize_timeout),
             options=self.config.options,
         )

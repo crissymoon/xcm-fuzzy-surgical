@@ -24,7 +24,7 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Syntax highlighted results and editor context with a fallback highlighter when Pygments is unavailable
 - Preview rows scroll horizontally to the matched text instead of showing column zero
 - Mouse clicks select result and browser rows, place the caret at the clicked cell in both editors, and double clicks open the selected item
-- Wheel and trackpad scrolling works in the result list, directory picker, file browser and both editors, including the older ncurses wheel-down encoding used by macOS
+- Wheel and trackpad scrolling works in the result list, directory picker, file browser and both editors, including the older ncurses wheel-down encoding used by macOS; trackpad momentum is throttled so the view glides instead of jumping to the end
 - Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file
 - Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path
 - Surgical line editing with surrounding context and a save that proves the disk copy
@@ -44,7 +44,8 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - LSP completion in the full editor through any installed server: pylsp, pyright, typescript-language-server, gopls, rust-analyzer, jdtls, clangd, bash-language-server, lua-language-server, solargraph or intelephense
 - Python servers and linters installed inside the project virtual environment are found through the running interpreter, not only through PATH
 - Java files use Eclipse JDT Language Server, detected from PATH, Homebrew or the redhat.java VS Code extension, with a longer initialize timeout
-- Ctrl+Space requests completions, typing identifier characters suggests after a short delay, and Enter or Tab inserts a plain text item
+- Ctrl+N or F12 requests completions, typing identifier characters suggests after a short delay, and Enter or Tab inserts a plain text item
+- The completion popup shows the selected item's type and documentation, and the status bar shows language server progress such as project import while a server is still loading
 - When completion does nothing the status bar names the missing server and the install command, and --lsp-doctor prints every tool it can and cannot run
 - Linters run in a separate worker after open and save: ruff, flake8, pyflakes, eslint, shellcheck, ruby -c, php -l and gofmt
 - F9 lists merged language server and linter diagnostics, and Enter jumps to the reported line
@@ -152,7 +153,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Up / Down | Move the selection one row. |
 | Page Up / Page Down | Move the selection one page. |
 | Mouse click | Select a row. Double click opens the line editor. |
-| Mouse wheel / trackpad | Scroll three rows. |
+| Mouse wheel / trackpad | Scroll three rows per mouse notch, with trackpad momentum throttled. |
 | Left / Right | Scroll long code lines horizontally. |
 | Enter | Edit the selected line after reloading it from disk. |
 | F3 | Browse folders and edit whole files. |
@@ -171,7 +172,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Type | Fuzzy filter directories. |
 | Up / Down | Move the selection. |
 | Mouse click | Select a folder. Double click opens it. |
-| Mouse wheel / trackpad | Scroll three rows. |
+| Mouse wheel / trackpad | Scroll three rows per mouse notch, with trackpad momentum throttled. |
 | Enter | Open the selected folder or start searching the current folder. |
 | Backspace | Delete filter text, or move to the parent directory when the filter is empty. |
 | Esc | Cancel and return to the previous view. |
@@ -184,7 +185,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Type | Fuzzy filter the current folder. |
 | Up / Down | Move the selection. |
 | Mouse click | Select a row. Double click opens a folder or edits the file. |
-| Mouse wheel / trackpad | Scroll three rows. |
+| Mouse wheel / trackpad | Scroll three rows per mouse notch, with trackpad momentum throttled. |
 | Enter | Open a folder or edit the selected file in the full editor. |
 | Backspace | Delete filter text, or move to the parent folder when the filter is empty. |
 | Ctrl+U | Clear the filter. |
@@ -198,12 +199,12 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Arrows / Home / End | Move the cursor, wrapping between lines. |
 | Page Up / Page Down | Move one page. |
 | Mouse click | Place the cursor at the clicked cell. |
-| Mouse wheel / trackpad | Scroll three lines. |
+| Mouse wheel / trackpad | Scroll three lines per mouse notch. Rapid trackpad events are throttled to one row at a time. |
 | Enter | Split the current line. |
 | Backspace / Delete | Delete backwards or forwards, joining lines at the edges. |
 | Tab | Insert four spaces. |
 | Ctrl+Z / Ctrl+Y | Undo and redo. |
-| Ctrl+Space | Request completions from the language server. Ctrl+N also works. Typing two identifier characters suggests automatically. |
+| Ctrl+N | Request completions from the language server. F12 and Ctrl+Space also work. Typing two identifier characters suggests automatically. The popup shows the selected item's type and documentation, and the status bar shows server progress. |
 | Up / Down (completions) | Choose a suggestion. Enter or Tab inserts it, Esc closes the list. |
 | F9 | Show merged language server and linter issues. Ctrl+L also works. Up / Down select, Enter jumps, F9 closes. |
 | Ctrl+S / F2 | Write and verify the disk copy, after storing the previous version in SQLite. |
@@ -218,7 +219,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | --- | --- |
 | Up / Down | Switch the active context line. |
 | Mouse click | Place the caret in the edit line, or switch the context line. |
-| Mouse wheel / trackpad | Move the active context line by one. |
+| Mouse wheel / trackpad | Move the active context line by one. Rapid trackpad events are throttled. |
 | Left / Right | Move the cursor. |
 | Home / End | Jump to the start or end of the line. |
 | Backspace / Delete | Edit the line. |

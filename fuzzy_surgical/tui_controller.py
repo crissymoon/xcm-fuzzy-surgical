@@ -23,7 +23,7 @@ from fuzzy_surgical.indexer import FileIndexer
 from fuzzy_surgical.line_jump import LineJumpResolver
 from fuzzy_surgical.mouse import (
     MOUSE_KEY,
-    SCROLL_LINES,
+    ScrollGate,
     ClickTracker,
     disable_mouse,
     enable_mouse,
@@ -114,6 +114,7 @@ class TUIController:
         self.saved_at = 0.0
         self.termios_state = None
         self.click_tracker = ClickTracker()
+        self.scroll_gate = ScrollGate()
 
     def run(self, start_dir: Optional[Path] = None) -> None:
         """Start curses, choosing a directory first when none was supplied."""
@@ -467,7 +468,9 @@ class TUIController:
         if event is None:
             return
         if event.is_scroll:
-            self._move_selection(event.direction * SCROLL_LINES)
+            delta = self.scroll_gate.lines(event.direction)
+            if delta:
+                self._move_selection(delta)
             return
 
         top = 3
