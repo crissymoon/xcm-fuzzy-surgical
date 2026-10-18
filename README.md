@@ -25,8 +25,10 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Preview rows scroll horizontally to the matched text instead of showing column zero
 - Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file
 - Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path
-- Surgical line editing with surrounding context, an explicit confirmation step and an atomic write
-- Automatic backup of the original file before a write
+- Surgical line editing with surrounding context and an explicit confirmation step
+- Writes keep the existing inode, so Sublime, less and tail -f see the change immediately
+- Symlinked files are written through to their target and external edits are never silently overwritten
+- Files changed by other programs are picked up automatically, and F5 rebuilds the index
 - Bounded, crash safe indexing with permission, binary file and symlink loop guards
 - Single file JSON metadata that regenerates this README through a checked in script
 
@@ -116,8 +118,9 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Up / Down | Move the selection one row. |
 | Page Up / Page Down | Move the selection one page. |
 | Left / Right | Scroll long code lines horizontally. |
-| Enter | Edit the selected line. |
+| Enter | Edit the selected line after reloading it from disk. |
 | F2 | Open the directory picker. |
+| F5 | Reload the whole index, for example after a branch switch. |
 | F1 | Show help. |
 | Ctrl+U | Clear the search. |
 | Esc | Clear the search, then quit when the search is already empty. |
@@ -156,7 +159,9 @@ The indexer never follows directory symlinks and skips unreadable, binary or ove
 | Lines per file | 5,000 |
 | Lines in total | 500,000 |
 
-- Writes are atomic, keep a backup of the original file and only happen after confirmation.
+- Writes only happen after confirmation, keep the existing inode so open editors and pagers see the change, and preserve CRLF endings and a missing final newline.
+- Symlinks are written through to their real target, and a file that changed on disk is reloaded instead of being overwritten.
+- Files modified by other programs are detected while the search view is idle, and F5 rebuilds the whole index.
 - The directory picker validates every target and falls back to a readable directory instead of crashing.
 - Terminal resizes and small terminals are guarded, so drawing is clipped instead of raising.
 

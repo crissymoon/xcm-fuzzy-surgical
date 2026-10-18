@@ -131,7 +131,4 @@ dmypy.json
 # macOS
 .DS_Store
 
-# FuzzySurgical editor backups
-*.fuzzysurgical.bak
-
 # End of the list

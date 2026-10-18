@@ -43,8 +43,8 @@ def test_apply_changes():
             os.unlink(temp_path)
 
 
-def test_safe_file_modification():
-    """Test that backup is created during modification."""
+def test_save_leaves_no_backup_file():
+    """Test that a save writes the file and leaves no backup behind."""
     editor = EditorController()
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -53,17 +53,15 @@ def test_safe_file_modification():
         backup_path = temp_path + ".fuzzysurgical.bak"
 
     try:
-        # Test backup creation
         editor.file_path = temp_path
         editor.line_num = 1
         editor.edited_line = "Modified content"
         editor.original_line = "Test content"
 
-        # Backup should be created and removed after successful write
         result = editor._apply_changes()
 
         assert result is True
-        assert not os.path.exists(backup_path)  # Backup should be removed
+        assert not os.path.exists(backup_path)
 
         # Verify content
         with open(temp_path, "r") as f:

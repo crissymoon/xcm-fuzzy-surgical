@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import os
 from typing import Dict, List, Optional, Tuple
 
 import curses
 import curses.ascii
 
 from fuzzy_surgical.colors import Theme
+from fuzzy_surgical.file_writer import FileWriteError, write_text
 from fuzzy_surgical.renderer import (
     draw_box,
     draw_code_line,
@@ -428,36 +428,58 @@ class EditorController:
             )
 
     def _apply_changes(self) -> bool:
-        """Apply all edited lines, replacing the file atomically."""
+        """Apply edited lines after checking that the disk copy is unchanged."""
+        self.save_error = ""
         try:
             with open(
                 self.file_path,
                 "r",
                 encoding="utf-8",
                 errors="surrogateescape",
+                newline="",
             ) as handle:
                 lines = handle.readlines()
-
-            edits = self.line_edits or {self.line_num: self.edited_line}
-
-            for number, new_text in edits.items():
-                if 0 < number <= len(lines):
-                    newline = "\n"
-                    if lines[number - 1].endswith("\r\n"):
-                        newline = "\r\n"
-                    lines[number - 1] = new_text + newline
-
-            backup_path = self.file_path + ".fuzzysurgical.bak"
-            with open(
-                backup_path,
-                "w",
-                encoding="utf-8",
-                errors="surrogateescape",
-            ) as handle:
-                handle.writelines(lines)
-
-            os.replace(backup_path, self.file_path)
-            return True
-
-        except (OSError, IOError, PermissionError):
+        except OSError as exc:
+            self.save_error = f"Could not read the file: {exc.strerror or exc}"
             return False
+
+        edits = self.line_edits or {self.line_num: self.edited_line}
+        originals = dict(self.context_lines)
+
+        for number in edits:
+            if not 0 < number <= len(lines):
+                self.save_error = f"Line {number} no longer exists. Press Esc and reopen."
+                return False
+            expected = originals.get(number)
+            if expected is None:
+                continue
+            current = _split_line_ending(lines[number - 1])[0]
+            if current != expected:
+                self.save_error = (
+                    "File changed on disk. Press Esc and reopen to edit the new text."
+                )
+                return False
+
+        for number, new_text in edits.items():
+            _, ending = _split_line_ending(lines[number - 1])
+            if not ending and number < len(lines):
+                ending = "\n"
+            lines[number - 1] = new_text + ending
+
+        try:
+            write_text(self.file_path, "".join(lines))
+        except FileWriteError as exc:
+            self.save_error = str(exc)
+            return False
+        return True
+
+
+def _split_line_ending(line: str) -> Tuple[str, str]:
+    """Return a line without its terminator plus the original terminator."""
+    if line.endswith("\r\n"):
+        return line[:-2], "\r\n"
+    if line.endswith("\n"):
+        return line[:-1], "\n"
+    if line.endswith("\r"):
+        return line[:-1], "\r"
+    return line, ""

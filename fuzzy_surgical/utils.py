@@ -31,28 +31,6 @@ def format_file_size(bytes_size: int) -> str:
     return f"{bytes_size:.1f}TB"
 
 
-def safe_write_file(file_path: str, content: str) -> bool:
-    """Safely write content to file with a temporary backup."""
-    backup_path = file_path + ".bak"
-    try:
-        if os.path.exists(file_path):
-            os.replace(file_path, backup_path)
-
-        with open(file_path, "w", encoding="utf-8") as handle:
-            handle.write(content)
-
-        if os.path.exists(backup_path):
-            os.remove(backup_path)
-        return True
-    except (OSError, IOError, PermissionError):
-        if os.path.exists(backup_path) and not os.path.exists(file_path):
-            try:
-                os.replace(backup_path, file_path)
-            except OSError:
-                pass
-        return False
-
-
 def safe_directory(path: Optional[os.PathLike]) -> Optional[Path]:
     """Resolve a directory only when it exists and is readable.
 

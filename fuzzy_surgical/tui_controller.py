@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -42,6 +43,9 @@ CTRL_X = 24
 
 DIRECTORY_KEYS = (curses.KEY_F2, CTRL_O)
 QUIT_KEYS = (curses.KEY_F10, CTRL_X, CTRL_Q)
+REFRESH_KEY = getattr(curses, "KEY_F5", -1)
+REFRESH_TIMEOUT_MS = 250
+REFRESH_INTERVAL_SECONDS = 1.5
 
 
 class TUIController:
@@ -74,6 +78,7 @@ class TUIController:
         self.jump_notice = ""
         self.jump_active = False
         self.help_visible = False
+        self.last_refresh = 0.0
 
     def run(self, start_dir: Optional[Path] = None) -> None:
         """Start curses, choosing a directory first when none was supplied."""
@@ -110,7 +115,17 @@ class TUIController:
         self._search_loop()
 
     def _load_directory(self, path: Path) -> None:
+        self.root_dir = path
+        self.query = ""
+        self._reload_index()
+
+    def _reload_index(self) -> None:
+        """Rebuild the index for the current root, keeping the query."""
+        path = self.root_dir
+        if path is None:
+            return
         self._draw_loading(path)
+        preserve = self._selected_target()
         self.load_error = ""
         try:
             self.file_lines = self.indexer.index_directory(
@@ -122,9 +137,44 @@ class TUIController:
             self.file_lines = {}
             self.load_error = str(exc)
 
-        self.root_dir = path
-        self.query = ""
-        self._update_results()
+        self.last_refresh = time.monotonic()
+        self._update_results(preserve=preserve)
+
+    def _selected_target(self) -> Optional[Tuple[str, int]]:
+        if not self.results:
+            return None
+        index = max(0, min(self.selected_idx, len(self.results) - 1))
+        file_path, line_num = self.results[index][:2]
+        return file_path, line_num
+
+    def _refresh_changed_files(self) -> None:
+        """Pick up edits made by other programs while the search view is idle."""
+        now = time.monotonic()
+        if now - self.last_refresh < REFRESH_INTERVAL_SECONDS:
+            return
+        self.last_refresh = now
+        try:
+            changed = self.indexer.reindex_changed()
+        except Exception:
+            return
+        if not changed:
+            return
+        self.file_lines = self.indexer.file_lines
+        self._update_results(preserve=self._selected_target())
+
+    def _read_search_key(self):
+        """Read a key, timing out so external file changes can be noticed."""
+        try:
+            self.stdscr.timeout(REFRESH_TIMEOUT_MS)
+        except curses.error:
+            return read_key(self.stdscr)
+        try:
+            return read_key(self.stdscr)
+        finally:
+            try:
+                self.stdscr.timeout(-1)
+            except curses.error:
+                pass
 
     def _draw_loading(self, path: Path) -> None:
         self.stdscr.erase()
@@ -157,8 +207,9 @@ class TUIController:
     def _search_loop(self) -> None:
         while True:
             self._draw_ui()
-            key = read_key(self.stdscr)
+            key = self._read_search_key()
             if key is None:
+                self._refresh_changed_files()
                 continue
 
             if self.help_visible:
@@ -189,6 +240,8 @@ class TUIController:
                 self._update_results()
             elif key == curses.KEY_F1:
                 self.help_visible = True
+            elif key == REFRESH_KEY:
+                self._reload_index()
             elif is_enter(key):
                 self._open_editor()
             elif key == curses.KEY_UP:
@@ -442,10 +495,10 @@ class TUIController:
             )
 
     def _draw_status(self, height: int, width: int) -> None:
-        if width < 65:
-            left = " Enter edit  F2 dirs  Esc clear/quit "
+        if width < 72:
+            left = " Enter edit  F2 dirs  F5 reload  Esc quit "
         else:
-            left = " Enter edit  F2 directory  F1 help  Esc clear/quit  Ctrl+X quit "
+            left = " Enter edit  F2 directory  F5 reload  F1 help  Esc quit  Ctrl+X quit "
         if self.results:
             position = self.selected_idx + 1
             right = f" {position}/{len(self.results)} "
@@ -472,6 +525,7 @@ class TUIController:
             "Left / Right   scroll long code lines",
             "Enter          edit the selected line",
             "F2             choose another directory",
+            "F5             reload changed files from disk",
             "Ctrl+U         clear the search",
             "Esc            clear search, then quit",
             "Ctrl+X / F10   quit",
@@ -507,7 +561,20 @@ class TUIController:
         if not self.results:
             return
         index = max(0, min(self.selected_idx, len(self.results) - 1))
-        file_path, line_num, line_text, _ = self.results[index]
+        file_path, line_num, _, _ = self.results[index]
+
+        # Refresh this file first so external edits are visible and any
+        # conflict is caught against the current disk contents.
+        self.indexer.reindex_file(file_path)
+        self.file_lines = self.indexer.file_lines
+        lines = self.file_lines.get(file_path) or []
+        if not lines:
+            self.jump_notice = "That file is no longer readable. F5 reloads the index."
+            self._update_results()
+            return
+
+        line_num = max(1, min(line_num, len(lines)))
+        line_text = lines[line_num - 1][1]
         context = self.indexer.get_file_context(file_path, line_num, context_lines=8)
 
         match_column = None
@@ -529,4 +596,5 @@ class TUIController:
         if modified:
             self.indexer.reindex_file(file_path)
             self.file_lines = self.indexer.file_lines
+        self.last_refresh = time.monotonic()
         self._update_results(preserve=(file_path, line_num))

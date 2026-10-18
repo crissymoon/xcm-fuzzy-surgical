@@ -60,6 +60,7 @@ class FileIndexer:
     def __init__(self, limits: Optional[IndexLimits] = None) -> None:
         self.limits = limits or IndexLimits()
         self.file_lines: Dict[str, List[tuple]] = {}
+        self.signatures: Dict[str, tuple] = {}
         self.total_lines = 0
         self.skipped_files = 0
 
@@ -77,6 +78,7 @@ class FileIndexer:
         suffixes = self._normalise_extensions(extensions)
 
         self.file_lines.clear()
+        self.signatures.clear()
         self.total_lines = 0
         self.skipped_files = 0
 
@@ -131,12 +133,34 @@ class FileIndexer:
 
     def reindex_file(self, file_path: str) -> None:
         """Refresh one file after an edit without re-walking the tree."""
-        old_lines = self.file_lines.get(file_path, [])
-        self.total_lines -= len(old_lines)
         self._index_file(Path(file_path))
 
+    def reindex_changed(self) -> List[str]:
+        """Refresh files whose size or modification time changed on disk.
+
+        Returns the paths that were refreshed so the caller can redraw only
+        when something actually changed.
+        """
+        changed: List[str] = []
+        for file_path, signature in list(self.signatures.items()):
+            try:
+                info = os.stat(file_path)
+            except OSError:
+                self._index_file(Path(file_path))
+                changed.append(file_path)
+                continue
+            if (info.st_mtime_ns, info.st_size) == signature:
+                continue
+            self._index_file(Path(file_path))
+            changed.append(file_path)
+        return changed
+
     def _index_file(self, file_path: Path) -> None:
-        self.file_lines.pop(str(file_path), None)
+        key = str(file_path)
+        previous = self.file_lines.pop(key, None)
+        if previous is not None:
+            self.total_lines = max(0, self.total_lines - len(previous))
+        self.signatures.pop(key, None)
 
         try:
             info = file_path.stat()
@@ -173,8 +197,9 @@ class FileIndexer:
             self.skipped_files += 1
             return
 
-        self.file_lines[str(file_path)] = lines
+        self.file_lines[key] = lines
         self.total_lines += len(lines)
+        self.signatures[key] = (info.st_mtime_ns, info.st_size)
 
     def get_file_context(
         self,
