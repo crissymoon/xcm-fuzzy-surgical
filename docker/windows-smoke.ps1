@@ -105,6 +105,22 @@ Assert-True ($located -like "*$AppName.cmd*") "where resolves the generated cmd 
 $LauncherVersion = (& cmd /c "call `"$Launcher`" --version" 2>&1 | Out-String).Trim()
 Assert-True ($LauncherVersion -eq "$AppName $ExpectedVersion") "launcher reports $LauncherVersion"
 
+$LauncherBytes = [System.IO.File]::ReadAllBytes($Launcher)
+$HasBom = $LauncherBytes.Length -ge 3 -and $LauncherBytes[0] -eq 0xEF -and $LauncherBytes[1] -eq 0xBB -and $LauncherBytes[2] -eq 0xBF
+Assert-True (-not $HasBom) "launcher has no UTF-8 BOM"
+$OemEncoding = [System.Text.Encoding]::GetEncoding(
+    [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage
+)
+$LauncherText = $OemEncoding.GetString($LauncherBytes)
+Assert-True ($LauncherText.Contains("exit /b %ERRORLEVEL%")) "launcher propagates the exit code"
+Assert-True ($LauncherText.Contains($VenvPython)) "launcher points at the project virtual environment"
+
+$PathVersion = (& cmd /c "$AppName --version" 2>&1 | Out-String).Trim()
+Assert-True ($PathVersion -eq "$AppName $ExpectedVersion") "PATH lookup runs $PathVersion"
+
+$ModuleVersion = (& $VenvPython -m fuzzy_surgical --version | Out-String).Trim()
+Assert-True ($ModuleVersion -eq "$AppName $ExpectedVersion") "python -m fuzzy_surgical reports $ModuleVersion"
+
 Write-Host "== Test suite and lint =="
 Assert-Python @("-m", "pytest", "-q", "tests") "pytest passes on Windows"
 Assert-Python @("-m", "flake8", "main.py", "fuzzy_surgical", "tests", "scripts") "flake8 passes"
@@ -124,6 +140,10 @@ if ($LASTEXITCODE -ne 0) {
     throw "FAIL: reinstall failed"
 }
 Assert-True (Test-Path -LiteralPath $Launcher) "reinstall restores the launcher"
+
+$UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$PathEntries = @($UserPath -split ";" | Where-Object { $_ -eq $BinDir })
+Assert-True ($PathEntries.Count -eq 1) "reinstall keeps a single PATH entry"
 
 Write-Host ""
 Write-Host "windows smoke passed"

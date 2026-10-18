@@ -120,8 +120,21 @@ New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 $LauncherContent = @"
 @echo off
 "$VenvPython" "$ProjectDir\main.py" %*
+exit /b %ERRORLEVEL%
 "@
-[System.IO.File]::WriteAllText($Launcher, $LauncherContent, [System.Text.Encoding]::Default)
+# cmd.exe reads batch files with the console (OEM) code page. Encoding.Default
+# is ANSI in PowerShell 5.1 and UTF-8 in PowerShell 7, so either value mangles
+# launchers for profiles whose path contains non-ASCII characters.
+$OemCodePage = [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage
+$LauncherEncoding = [System.Text.Encoding]::GetEncoding($OemCodePage)
+$LauncherBytes = $LauncherEncoding.GetBytes($LauncherContent)
+if ($LauncherEncoding.GetString($LauncherBytes) -ne $LauncherContent) {
+    throw "The install path has characters cmd.exe cannot execute: $ProjectDir. Move the project to an ASCII path and run install.ps1 again."
+}
+[System.IO.File]::WriteAllBytes($Launcher, $LauncherBytes)
+if (-not (Test-Path -LiteralPath $Launcher)) {
+    throw "The launcher was not written to $Launcher"
+}
 
 $CurrentParts = @([Environment]::GetEnvironmentVariable("Path", "User") -split ";" | Where-Object { $_ })
 if ($CurrentParts -notcontains $BinDir) {

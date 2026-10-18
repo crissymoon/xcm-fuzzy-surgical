@@ -78,3 +78,20 @@ def test_windows_image_uses_server_core():
 
     assert "mcr.microsoft.com/windows/servercore" in dockerfile
     assert "install.ps1" in dockerfile
+
+
+def test_windows_runner_selects_an_isolation_mode():
+    runner = (ROOT / "docker" / "run-tests.ps1").read_text(encoding="utf-8")
+
+    assert "--isolation" in runner
+    assert "hyperv" in runner
+    assert "Windows containers cannot run on macOS or Linux" in runner
+
+
+def test_windows_launcher_uses_the_console_code_page():
+    installer = (ROOT / "install.ps1").read_text(encoding="utf-8")
+
+    assert "OEMCodePage" in installer
+    assert "WriteAllBytes" in installer
+    assert "exit /b %ERRORLEVEL%" in installer
+    assert "cmd.exe cannot execute" in installer
