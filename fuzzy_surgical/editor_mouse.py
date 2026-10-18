@@ -52,6 +52,7 @@ class EditorMouseMixin:
         ]
         self.completion.close()
         self.diagnostics_panel.close()
+        self.jump.close()
         self.menu.open(x, y, items, height, width)
 
     def _handle_menu_key(self, key) -> bool:
@@ -102,6 +103,9 @@ class EditorMouseMixin:
 
     def _handle_mouse(self, event: MouseEvent) -> None:
         """Apply a click, drag, release or wheel tick to the active mode."""
+        if self.jump.active:
+            self.jump.close()
+            self.notice = ""
         if self.menu.visible:
             if event.is_scroll:
                 self.menu.close()

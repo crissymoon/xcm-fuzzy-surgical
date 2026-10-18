@@ -32,6 +32,9 @@ def run_chord(editor, key: ChordKey) -> bool:
     if char == "z":
         editor._undo()
         return False
+    if char == "g":
+        editor._open_jump_prompt()
+        return False
     label = ("Cmd+" if key.super else "Alt+") + key.char.upper()
     editor.notice = (
         f"{label} is not bound here. Ctrl+X cuts, Ctrl+C copies, Ctrl+V pastes."

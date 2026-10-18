@@ -21,6 +21,7 @@ from typing import Optional
 import curses
 import curses.ascii
 
+from fuzzy_surgical import editor_jump
 from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.completion_ui import CompletionPopup
 from fuzzy_surgical.context_menu import ContextMenu
@@ -72,6 +73,7 @@ from fuzzy_surgical.utils import (
 CTRL_SPACE = 0
 CTRL_A = 1
 CTRL_C = 3
+CTRL_G = 7
 CTRL_L = 12
 CTRL_N = 14
 CTRL_S = 19
@@ -182,6 +184,7 @@ class FullEditor(EditorScrollMixin, EditorMouseMixin, EditorViewMixin):
         self.selection = Selection()
         self.completion = CompletionPopup()
         self.menu = ContextMenu()
+        self.jump = editor_jump.JumpPrompt()
         self.diagnostics_panel = DiagnosticPanel()
         self.diagnostics = []
         self.assist_status = ""
@@ -221,6 +224,7 @@ class FullEditor(EditorScrollMixin, EditorMouseMixin, EditorViewMixin):
         self.selection.clear()
         self.completion = CompletionPopup()
         self.menu.close()
+        self.jump.close()
         self.diagnostics_panel = DiagnosticPanel()
         self.diagnostics = []
         self._completion_due_at = 0.0
@@ -425,6 +429,9 @@ class FullEditor(EditorScrollMixin, EditorMouseMixin, EditorViewMixin):
             return self._handle_menu_key(key)
         if isinstance(key, ChordKey):
             return run_chord(self, key)
+        if self.jump.active:
+            self._handle_jump_key(key)
+            return False
         if key == CTRL_C:
             self._copy_selection()
             return False
@@ -499,6 +506,8 @@ class FullEditor(EditorScrollMixin, EditorMouseMixin, EditorViewMixin):
             self._save()
         elif key == curses.KEY_F7:
             self._toggle_line_numbers()
+        elif key == CTRL_G:
+            self._open_jump_prompt()
         elif key == curses.KEY_F6:
             self._open_history()
         elif key == curses.KEY_F8:
@@ -831,6 +840,75 @@ class FullEditor(EditorScrollMixin, EditorMouseMixin, EditorViewMixin):
         self.preferences.toggle_line_numbers()
         self.notice = self.preferences.describe_line_numbers()
         self.error = ""
+
+    def _open_jump_prompt(self) -> None:
+        """Open the one-row prompt that jumps by a line or a distance."""
+        self.jump.open()
+        self.error = ""
+        self.notice = ""
+        self.completion.close()
+        self.diagnostics_panel.close()
+
+    def _handle_jump_key(self, key) -> None:
+        """Interpret a key while the jump prompt is open."""
+        action = self.jump.press(key)
+        if action == editor_jump.CANCEL:
+            self.jump.close()
+            self.notice = "Jump cancelled."
+            return
+        if action in (editor_jump.TYPED, editor_jump.IGNORED):
+            return
+        number = self.jump.value
+        if number < 1:
+            self.notice = "Type a line number first."
+            return
+        if action == editor_jump.UP:
+            self._jump_lines(-number, "up")
+        elif action == editor_jump.DOWN:
+            self._jump_lines(number, "down")
+        else:
+            self._jump_absolute(number)
+
+    def _jump_lines(self, delta: int, direction: str) -> None:
+        """Move the caret a number of logical lines, matching the gutter."""
+        self.jump.close()
+        self.error = ""
+        self.notice = ""
+        before = self.buffer.cursor_row
+        target = max(0, min(self.buffer.line_count - 1, before + delta))
+        self.buffer.set_cursor(target, self.buffer.cursor_col)
+        self.selection.clear()
+        self.completion.close()
+        self._pending_center = True
+        moved = abs(target - before)
+        if moved == 0:
+            self.notice = (
+                "Already at the first line."
+                if direction == "up"
+                else "Already at the last line."
+            )
+            return
+        plural = "" if moved == 1 else "s"
+        self.notice = (
+            f"Jumped {moved} line{plural} {direction} to line {target + 1}."
+        )
+
+    def _jump_absolute(self, number: int) -> None:
+        """Move the caret to a one-based line number, clamped to the file."""
+        self.jump.close()
+        self.error = ""
+        self.buffer.goto_line(number)
+        self.buffer.cursor_col = 0
+        self.selection.clear()
+        self.completion.close()
+        self._pending_center = True
+        landed = self.buffer.cursor_row + 1
+        if landed == number:
+            self.notice = f"Jumped to line {landed}."
+        else:
+            self.notice = (
+                f"Line {number} is past the end, so line {landed} is the last."
+            )
 
     def _select_history(self, index: int) -> None:
         if not self.history_entries:

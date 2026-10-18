@@ -28,7 +28,7 @@ from fuzzy_surgical.utils import display_path
 # them to the application.
 EDITOR_KEY_HINT = (
     "Ctrl+S save  Ctrl+X cut  Ctrl+C copy  Ctrl+V paste  "
-    "^N complete  F7 numbers  F10 actions  F1 help"
+    "^N complete  ^G jump  F7 numbers  F10 actions  F1 help"
 )
 
 
@@ -190,7 +190,15 @@ class EditorViewMixin:
             except curses.error:
                 pass
 
-        if self.error:
+        if self.jump.active:
+            safe_addstr(
+                self.stdscr,
+                height - 2,
+                0,
+                self.jump.hint(self.preferences.hybrid_line_numbers)[: width - 1],
+                self.theme.attr("ui.accent", bold=True),
+            )
+        elif self.error:
             safe_addstr(
                 self.stdscr,
                 height - 2,

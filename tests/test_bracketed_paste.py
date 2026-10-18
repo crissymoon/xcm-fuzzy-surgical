@@ -82,15 +82,17 @@ def test_a_lone_escape_still_closes_the_editor(monkeypatch) -> None:
 
 def test_unrecognised_escape_sequences_are_replayed(monkeypatch) -> None:
     _patch_timeout(monkeypatch)
-    screen = FakeScreen(list(ESC + "[Z") + [None])
+    screen = FakeScreen(list(ESC + "[9z") + [None])
 
     first = read_key(screen, input_timeout=120)
     second = read_key(screen, input_timeout=120)
     third = read_key(screen, input_timeout=120)
+    fourth = read_key(screen, input_timeout=120)
 
     assert first == 27
     assert second == "["
-    assert third == "Z"
+    assert third == "9"
+    assert fourth == "z"
 
 
 def _editor(text: str = "alpha beta gamma") -> FullEditor:

@@ -163,3 +163,27 @@ def test_cmd_x_without_a_selection_reports_it(clipboard) -> None:
 
     assert editor.buffer.to_text() == "alpha"
     assert "Nothing selected" in editor.notice
+
+
+def test_csi_arrow_is_decoded_as_a_navigation_key() -> None:
+    import curses
+
+    screen = FakeScreen(list("\x1b[B"))
+
+    assert read_key(screen, input_timeout=120) == curses.KEY_DOWN
+
+
+def test_ss3_arrow_is_decoded_as_a_navigation_key() -> None:
+    import curses
+
+    screen = FakeScreen(list("\x1bOA"))
+
+    assert read_key(screen, input_timeout=120) == curses.KEY_UP
+
+
+def test_shifted_csi_arrow_is_decoded_as_a_shift_key() -> None:
+    import curses
+
+    screen = FakeScreen(list("\x1b[1;2D"))
+
+    assert read_key(screen, input_timeout=120) == getattr(curses, "KEY_SLEFT", 393)

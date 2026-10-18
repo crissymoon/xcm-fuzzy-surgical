@@ -216,6 +216,56 @@ def _read_paste_block(stdscr) -> str:
     return "".join(collected)
 
 
+_CSI_NAV = {
+    "A": "KEY_UP",
+    "B": "KEY_DOWN",
+    "C": "KEY_RIGHT",
+    "D": "KEY_LEFT",
+    "H": "KEY_HOME",
+    "F": "KEY_END",
+}
+_CSI_SHIFT_NAV = {
+    "A": "KEY_SR",
+    "B": "KEY_SF",
+    "C": "KEY_SRIGHT",
+    "D": "KEY_SLEFT",
+    "H": "KEY_SHOME",
+    "F": "KEY_SEND",
+}
+_CSI_TILDE_NAV = {
+    "1": "KEY_HOME",
+    "2": "KEY_IC",
+    "3": "KEY_DC",
+    "4": "KEY_END",
+    "5": "KEY_PPAGE",
+    "6": "KEY_NPAGE",
+    "7": "KEY_HOME",
+    "8": "KEY_END",
+}
+
+
+def _csi_key(params: str, final: str):
+    """Map a CSI or SS3 sequence to the curses key it represents.
+
+    ncurses normally translates arrow and paging keys through terminfo, but a
+    terminal can send the plain CSI form while terminfo expects the
+    application form (or the reverse). Recognising both here keeps arrows from
+    being mistaken for an Escape key followed by typed characters.
+    """
+    import curses
+
+    if final in _CSI_NAV:
+        table = _CSI_SHIFT_NAV if params == "1;2" else _CSI_NAV
+        name = table[final]
+    elif final == "~":
+        name = _CSI_TILDE_NAV.get(params.split(";")[0])
+    elif final == "Z":
+        return getattr(curses, "KEY_BTAB", None)
+    else:
+        return None
+    return getattr(curses, name, None) if name else None
+
+
 def _chord_from_csi(params: str, final: str):
     """Decode a modifier report into a ChordKey when it names Command."""
     fields = params.split(";")
@@ -257,6 +307,17 @@ def _read_escape_sequence(stdscr, restore_timeout: int):
         following = _as_char(_read_one(stdscr))
         if not following:
             return None
+        if following == "O":
+            # SS3 form: Escape O A / B / C / D, used by terminals in
+            # application cursor mode when terminfo is not consulted.
+            final = _as_char(_read_one(stdscr))
+            key = _csi_key("", final)
+            if key is not None:
+                return key
+            _push_back("O")
+            if final:
+                _push_back(final)
+            return None
         if following != "[":
             if len(following) == 1 and following.isprintable():
                 # Option as Meta, or a terminal mapping that sends Command as
@@ -274,6 +335,9 @@ def _read_escape_sequence(stdscr, restore_timeout: int):
         chord = _chord_from_csi(params, final)
         if chord is not None:
             return chord
+        key = _csi_key(params, final)
+        if key is not None:
+            return key
         _push_back("[", *params, final)
         return None
     finally:

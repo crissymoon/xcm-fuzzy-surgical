@@ -2,7 +2,7 @@
   "schema_version": 1,
   "name": "fuzzy-surgical",
   "display_name": "FuzzySurgical",
-  "version": "0.6.7",
+  "version": "0.6.8",
   "tagline": "A terminal fuzzy finder with syntax highlighted results, surgical line replacement, a file browser and LSP completion.",
   "summary": "FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, and opens the matching file at that line in one full editor on Enter. F3 opens the same editor from a safe file browser, and every save can store the previous version in a local SQLite database for recovery. The editor speaks the Language Server Protocol for completion and diagnostics, and an optional dev box file adds project linters.",
   "author": {
@@ -53,7 +53,7 @@
     "Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file",
     "Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path",
     "Search results open in one full editor at the matched line, with surrounding context, a cursor and a save that proves the disk copy",
-    "Hybrid line numbers show the current line absolute and every other line relative to it; F7 toggles the style, --line-numbers picks the starting style, and the choice follows the session into the next file",
+    "Hybrid line numbers show the current line absolute and every other line relative to it; F7 toggles the style, --line-numbers picks the starting style, Ctrl+G jumps by a line number or by the number read above or below the caret, and the choice follows the session into the next file",
     "The search view keeps a short first-run brief above the status bar while the query is empty, saying in plain words how to search and how to open a file in the editor",
     "Enter, Ctrl+S and F2 save the editor buffer, and Esc asks before discarding unsaved changes",
     "The editor title and the result header show the absolute path, so duplicate file names in different folders are obvious",
@@ -476,6 +476,10 @@
         [
           "F7",
           "Toggle absolute or hybrid line numbers. Hybrid keeps the current line absolute and counts the other lines from it. The setting carries into the next file opened in the same session."
+        ],
+        [
+          "Ctrl+G",
+          "Open the jump prompt. Type a number, then Up or Down moves that many logical lines, which is exactly the number the hybrid gutter shows above or below the caret; Enter instead goes to that absolute line number, and Esc cancels. Cmd+G and Alt+G open the prompt where the terminal reports the chord."
         ],
         [
           "Ctrl+N",
