@@ -22,6 +22,14 @@ from fuzzy_surgical.renderer import (
 from fuzzy_surgical.selection import draw_selection
 from fuzzy_surgical.utils import display_path
 
+# The clipboard shortcuts lead the hint line because macOS terminals claim the
+# Command equivalents (Cmd+X, Cmd+C, Cmd+V) for themselves and never forward
+# them to the application.
+EDITOR_KEY_HINT = (
+    "Ctrl+S save  Ctrl+X cut  Ctrl+C copy  Ctrl+V paste  "
+    "^N complete  F10 actions  F1 help"
+)
+
 
 class EditorViewMixin:
     """Render the editor buffer, status line and overlays."""
@@ -86,8 +94,7 @@ class EditorViewMixin:
             self.stdscr,
             1,
             0,
-            "Ctrl+S save  F2 save  F6 history  F8 reload  "
-            "^N complete  F9 issues  F10 actions  F1 help"[: width - 1],
+            EDITOR_KEY_HINT[: width - 1],
             self.theme.attr("ui.dim", dim=True),
         )
 

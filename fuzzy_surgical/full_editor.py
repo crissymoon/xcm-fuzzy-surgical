@@ -27,6 +27,7 @@ from fuzzy_surgical.context_menu import ContextMenu
 from fuzzy_surgical.devbox import DevBoxSession
 from fuzzy_surgical.diagnostics_ui import DiagnosticPanel
 from fuzzy_surgical.editor_mouse import EditorMouseMixin
+from fuzzy_surgical.editor_chords import run_chord
 from fuzzy_surgical.editor_view import EditorViewMixin
 from fuzzy_surgical.file_writer import FileWriteError, WriteResult, file_digest, write_text
 from fuzzy_surgical.history import SnapshotStore
@@ -54,6 +55,7 @@ from fuzzy_surgical.text_buffer import (
     read_editor_file,
 )
 from fuzzy_surgical.utils import (
+    ChordKey,
     PastedText,
     disable_bracketed_paste,
     disable_interrupt_keys,
@@ -410,6 +412,8 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         self.error = ""
         if self.menu.visible:
             return self._handle_menu_key(key)
+        if isinstance(key, ChordKey):
+            return run_chord(self, key)
         if key == CTRL_C:
             self._copy_selection()
             return False
@@ -420,10 +424,7 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
             self._paste_clipboard()
             return False
         if key == CTRL_A:
-            self.selection.select_all(self.buffer.lines)
-            self.buffer.set_cursor(self.selection.head_row, self.selection.head_col)
-            self._schedule_auto_copy()
-            self.notice = f"Selected {len(self.buffer.lines)} lines. Ctrl+C copies."
+            self._select_all()
             return False
         if key == curses.ascii.ESC and self.selection.active:
             self.selection.clear()
@@ -620,8 +621,7 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
                     self._remember_clipboard(text)
                     self.error = ""
                     self.notice = (
-                        f"{result.message} Ctrl+V pastes it, "
-                        "right click or F10 opens the actions."
+                        f"{result.message} Ctrl+V pastes, Ctrl+X cuts."
                     )
                     changed = True
         if not self.clipboard_text or now >= self._clipboard_guard_until:
@@ -647,6 +647,16 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
             )
             changed = True
         return changed
+
+    def _select_all(self) -> None:
+        """Select the whole buffer and let the copy settle in the background."""
+        self.selection.select_all(self.buffer.lines)
+        self.buffer.set_cursor(self.selection.head_row, self.selection.head_col)
+        self._schedule_auto_copy()
+        self.notice = (
+            f"Selected {len(self.buffer.lines)} lines. "
+            "Ctrl+C copies, Ctrl+X cuts."
+        )
 
     def _cut_selection(self) -> None:
         """Copy the selection and remove it, in one undoable change."""

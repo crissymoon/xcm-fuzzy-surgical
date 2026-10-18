@@ -23,6 +23,21 @@ class PastedText:
     text: str
 
 
+@dataclass(frozen=True)
+class ChordKey:
+    """A letter pressed with Alt/Option, or Command where the terminal reports it.
+
+    macOS terminals keep Command chords for their own menus, so they are never
+    delivered to a text interface. Terminals that do report them use either the
+    CSI u encoding (with the super modifier) or an Escape prefix, and a few
+    users map Command to Option as Meta. Both arrive here so the editor can run
+    the matching clipboard command instead of typing the letter.
+    """
+
+    char: str
+    super: bool = False
+
+
 _PENDING: Deque[object] = deque()
 
 
@@ -157,12 +172,80 @@ def _read_one(stdscr):
         return None
 
 
-def _read_bracketed_paste(stdscr, restore_timeout: int):
-    """Consume a bracketed paste after an ESC, or push the bytes back.
+def _as_char(value) -> str:
+    """Coerce a key read into a single character, or an empty string."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int) and 0 <= value < 0x110000:
+        return chr(value)
+    return ""
 
-    Returns the pasted text when the full ESC [ 200 ~ ... ESC [ 201 ~ frame is
-    present, otherwise None so the ESC is delivered as the Escape key and the
-    remaining characters are replayed as ordinary input.
+
+def _read_csi_body(stdscr):
+    """Read CSI parameters and the final byte, or None when it times out."""
+    collected = []
+    while len(collected) < 24:
+        char = _as_char(_read_one(stdscr))
+        if not char:
+            return None
+        if "\x40" <= char <= "\x7e":
+            return "".join(collected), char
+        collected.append(char)
+    return None
+
+
+def _read_paste_block(stdscr) -> str:
+    """Collect a bracketed paste body after the CSI 200 ~ start marker."""
+    import curses
+
+    try:
+        stdscr.timeout(_PASTE_READ_TIMEOUT_MS)
+    except (AttributeError, curses.error):
+        pass
+    collected = []
+    tail = ""
+    while len(collected) < _MAX_PASTE_CHARS:
+        char = _as_char(_read_one(stdscr))
+        if not char:
+            break
+        collected.append(char)
+        tail = (tail + char)[-len(_BRACKET_END) :]
+        if tail == _BRACKET_END:
+            del collected[-len(_BRACKET_END) :]
+            return "".join(collected)
+    return "".join(collected)
+
+
+def _chord_from_csi(params: str, final: str):
+    """Decode a modifier report into a ChordKey when it names Command."""
+    fields = params.split(";")
+    modifiers = None
+    code = None
+    if final == "u" and len(fields) >= 2:
+        try:
+            code = int(fields[0])
+            modifiers = int(fields[1])
+        except ValueError:
+            return None
+    elif final == "~" and len(fields) >= 3 and fields[0] == "27":
+        try:
+            modifiers = int(fields[1])
+            code = int(fields[2])
+        except ValueError:
+            return None
+    if modifiers is None or code is None or not modifiers & 8:
+        return None
+    char = _as_char(code)
+    if not char or not char.isprintable():
+        return None
+    return ChordKey(char, super=True)
+
+
+def _read_escape_sequence(stdscr, restore_timeout: int):
+    """Decode what follows an Escape byte.
+
+    Returns a pasted block, a Command chord, or None so the caller delivers a
+    plain Escape and replays the bytes that did not form a known sequence.
     """
     import curses
 
@@ -171,44 +254,28 @@ def _read_bracketed_paste(stdscr, restore_timeout: int):
     except (AttributeError, curses.error):
         return None
     try:
-        following = _read_one(stdscr)
+        following = _as_char(_read_one(stdscr))
+        if not following:
+            return None
         if following != "[":
-            if following is not None:
-                _push_back(following)
+            if len(following) == 1 and following.isprintable():
+                # Option as Meta, or a terminal mapping that sends Command as
+                # Escape plus the letter.
+                return ChordKey(following)
+            _push_back(following)
             return None
-        prefix = []
-        for _ in range(3):
-            char = _read_one(stdscr)
-            if char is None:
-                break
-            prefix.append(char)
-        if "".join(prefix) != _BRACKET_START_BODY:
-            _push_back("[", *prefix)
+        parsed = _read_csi_body(stdscr)
+        if parsed is None:
+            _push_back("[")
             return None
-        final = _read_one(stdscr)
-        if final != "~":
-            _push_back("[", *prefix, final)
-            return None
-        try:
-            stdscr.timeout(_PASTE_READ_TIMEOUT_MS)
-        except (AttributeError, curses.error):
-            pass
-        collected = []
-        tail = ""
-        while len(collected) < _MAX_PASTE_CHARS:
-            char = _read_one(stdscr)
-            if char is None:
-                break
-            if not isinstance(char, str):
-                char = chr(char) if 0 <= char < 0x110000 else ""
-            if not char:
-                continue
-            collected.append(char)
-            tail = (tail + char)[-len(_BRACKET_END) :]
-            if tail == _BRACKET_END:
-                del collected[-len(_BRACKET_END) :]
-                return "".join(collected)
-        return "".join(collected)
+        params, final = parsed
+        if final == "~" and params.split(";")[0] == _BRACKET_START_BODY:
+            return PastedText(_read_paste_block(stdscr))
+        chord = _chord_from_csi(params, final)
+        if chord is not None:
+            return chord
+        _push_back("[", *params, final)
+        return None
     finally:
         try:
             stdscr.timeout(restore_timeout)
@@ -222,8 +289,9 @@ def read_key(stdscr, input_timeout: Optional[int] = None):
     Single character control keys are normalised to their integer code so
     callers can compare them with curses constants on every platform. When
     ``input_timeout`` is supplied, a leading ESC is checked for a bracketed
-    paste frame and returned as ``PastedText`` instead of the Escape key; the
-    previous input timeout is restored afterwards.
+    paste frame, a Command chord or an Option chord and returned as
+    ``PastedText`` or ``ChordKey`` instead of the Escape key; the previous
+    input timeout is restored afterwards.
     """
     if _PENDING:
         return _PENDING.popleft()
@@ -231,9 +299,9 @@ def read_key(stdscr, input_timeout: Optional[int] = None):
     if value is None:
         return None
     if value == "\x1b" and input_timeout is not None:
-        pasted = _read_bracketed_paste(stdscr, input_timeout)
-        if pasted is not None:
-            return PastedText(pasted)
+        decoded = _read_escape_sequence(stdscr, input_timeout)
+        if decoded is not None:
+            return decoded
     if isinstance(value, str) and len(value) == 1:
         code = ord(value)
         if code < 32 or code == 127:
