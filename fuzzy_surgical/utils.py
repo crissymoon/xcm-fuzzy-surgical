@@ -179,3 +179,31 @@ def restore_terminal_mode(original) -> None:
         termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, original)
     except (OSError, ValueError, termios.error):
         pass
+
+
+def disable_interrupt_keys():
+    """Deliver Ctrl+C and Ctrl+Z to the app instead of the terminal driver.
+
+    Curses keeps ISIG enabled in cbreak mode, so Ctrl+C raises SIGINT and
+    Ctrl+Z suspends the process. The full editor needs both as ordinary keys:
+    copy and undo. Returns the previous attributes for restore_terminal_mode.
+    """
+    if os.name == "nt":
+        return None
+    try:
+        import sys
+        import termios
+    except ImportError:
+        return None
+    try:
+        descriptor = sys.stdin.fileno()
+        original = termios.tcgetattr(descriptor)
+    except (OSError, ValueError, termios.error):
+        return None
+    try:
+        updated = list(original)
+        updated[3] = original[3] & ~termios.ISIG
+        termios.tcsetattr(descriptor, termios.TCSADRAIN, updated)
+    except (OSError, termios.error):
+        return None
+    return original

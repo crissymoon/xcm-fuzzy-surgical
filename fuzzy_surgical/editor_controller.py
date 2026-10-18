@@ -284,6 +284,8 @@ class EditorController:
             if delta:
                 self._move_context(delta)
             return
+        if not event.is_click:
+            return
 
         if event.y == self.edit_row:
             display_column = self.edit_view_start + max(0, event.x)

@@ -24,10 +24,12 @@ class FakeScreen:
 
 def test_click_and_wheel_states_become_events(monkeypatch) -> None:
     monkeypatch.setattr(mouse, "_PRIMARY_CLICK_BITS", 0x01)
+    monkeypatch.setattr(mouse, "_RELEASE_BITS", 0x20)
     monkeypatch.setattr(mouse, "_SCROLL_UP_BITS", 0x02)
     monkeypatch.setattr(mouse, "_SCROLL_DOWN_BITS", 0x04)
     monkeypatch.setattr(mouse, "_REPORT_BIT", 0x08)
     monkeypatch.setattr(mouse, "_LEGACY_SCROLL_DOWN", False)
+    mouse.reset_input_state()
 
     click = mouse.event_from_state(4, 6, 0x01)
     assert click == MouseEvent(4, 6, "click")
@@ -41,20 +43,37 @@ def test_click_and_wheel_states_become_events(monkeypatch) -> None:
 
     assert mouse.event_from_state(4, 6, 0x10) is None
 
+    release = mouse.event_from_state(4, 6, 0x20)
+    assert release is not None and release.is_release
+
+    drag = mouse.event_from_state(4, 6, 0x09)
+    assert drag is not None and drag.is_drag
+
 
 def test_old_ncurses_wheel_down_is_a_position_report(monkeypatch) -> None:
     monkeypatch.setattr(mouse, "_PRIMARY_CLICK_BITS", 0x01)
+    monkeypatch.setattr(mouse, "_RELEASE_BITS", 0x20)
     monkeypatch.setattr(mouse, "_SCROLL_UP_BITS", 0x02)
     monkeypatch.setattr(mouse, "_SCROLL_DOWN_BITS", 0)
     monkeypatch.setattr(mouse, "_REPORT_BIT", 0x08)
     monkeypatch.setattr(mouse, "_LEGACY_SCROLL_DOWN", True)
+    mouse.reset_input_state()
 
     event = mouse.event_from_state(10, 5, 0x08)
     assert event is not None
     assert event.is_scroll and event.direction == 1
 
-    click = mouse.event_from_state(10, 5, 0x09)
+    click = mouse.event_from_state(10, 5, 0x01)
     assert click is not None and click.is_click
+
+    drag = mouse.event_from_state(10, 5, 0x08)
+    assert drag is not None and drag.is_drag
+
+    release = mouse.event_from_state(10, 5, 0x20)
+    assert release is not None and release.is_release
+
+    wheel = mouse.event_from_state(10, 5, 0x08)
+    assert wheel is not None and wheel.is_scroll and wheel.direction == 1
 
 
 def test_click_tracker_dedupes_pairs_and_finds_double_clicks() -> None:
@@ -63,9 +82,9 @@ def test_click_tracker_dedupes_pairs_and_finds_double_clicks() -> None:
     event = MouseEvent(3, 4, "click")
 
     assert tracker.classify(event) == "single"
-    now[0] = 0.10
+    now[0] = 0.02
     assert tracker.classify(event) is None
-    now[0] = 0.35
+    now[0] = 0.15
     assert tracker.classify(event) == "double"
 
     now[0] = 1.0
@@ -226,6 +245,7 @@ def test_full_editor_scroll_stops_with_the_caret_at_the_file_edges() -> None:
 
 def test_click_echoing_a_scroll_becomes_a_scroll(monkeypatch) -> None:
     monkeypatch.setattr(mouse, "_PRIMARY_CLICK_BITS", 0x01)
+    monkeypatch.setattr(mouse, "_RELEASE_BITS", 0x20)
     monkeypatch.setattr(mouse, "_SCROLL_UP_BITS", 0x02)
     monkeypatch.setattr(mouse, "_SCROLL_DOWN_BITS", 0x04)
     monkeypatch.setattr(mouse, "_REPORT_BIT", 0x08)

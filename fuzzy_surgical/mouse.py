@@ -22,7 +22,7 @@ SCROLL_TRACKPAD_STEP = 0.35
 SCROLL_MAX_RATE = 50.0
 SCROLL_BURST_GAP = 0.045
 DOUBLE_CLICK_SECONDS = 0.45
-DEDUPE_SECONDS = 0.20
+DEDUPE_SECONDS = 0.06
 CLICK_ECHO_SECONDS = 0.35
 CLICK_ECHO_DISTANCE = 2
 MOUSE_KEY = getattr(curses, "KEY_MOUSE", -1)
@@ -45,6 +45,8 @@ _CLICK_BITS = _bits(
 # Horizontal wheel ticks are reported as buttons 2 and 3 by older ncurses
 # builds. They are not clicks and must not move a selection.
 _PRIMARY_CLICK_BITS = _bits("BUTTON1_PRESSED", "BUTTON1_CLICKED")
+_PRESS_BITS = _bits("BUTTON1_PRESSED")
+_RELEASE_BITS = _bits("BUTTON1_RELEASED")
 # Older ncurses builds report horizontal wheel ticks as buttons 2 and 3. They
 # stay in the mask so the terminal encodes them as themselves instead of a
 # position report, which would otherwise look like wheel down.
@@ -59,6 +61,10 @@ _SCROLL_DOWN_BITS = _bits("BUTTON5_PRESSED", "BUTTON5_CLICKED")
 _REPORT_BIT = _bits("REPORT_MOUSE_POSITION")
 _LEGACY_SCROLL_DOWN = _SCROLL_DOWN_BITS == 0 and _REPORT_BIT != 0
 _ACTIVE = False
+# Old ncurses builds decode a drag as a bare position report, exactly like
+# wheel down. The button state is lost, so a press has to be remembered before
+# a report can be classed as a drag rather than a wheel tick.
+_BUTTON_HELD = False
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,7 @@ class MouseEvent:
     y: int
     kind: str
     direction: int = 0
+    phase: str = ""
 
     @property
     def is_click(self) -> bool:
@@ -77,6 +84,14 @@ class MouseEvent:
     @property
     def is_scroll(self) -> bool:
         return self.kind == "scroll"
+
+    @property
+    def is_drag(self) -> bool:
+        return self.kind == "drag"
+
+    @property
+    def is_release(self) -> bool:
+        return self.kind == "release"
 
 
 def mouse_available() -> bool:
@@ -98,12 +113,14 @@ def enable_mouse(stdscr) -> bool:
     if not mouse_available():
         return False
 
-    mask = _PRIMARY_CLICK_BITS | _IGNORED_BUTTON_BITS | _SCROLL_UP_BITS | _SCROLL_DOWN_BITS
-    if _LEGACY_SCROLL_DOWN:
-        # Enabling the position report is safe here because this ncurses build
-        # maps wheel down to it and does not switch the terminal into motion
-        # tracking mode for the request.
-        mask |= _REPORT_BIT
+    mask = (
+        _CLICK_BITS
+        | _RELEASE_BITS
+        | _IGNORED_BUTTON_BITS
+        | _SCROLL_UP_BITS
+        | _SCROLL_DOWN_BITS
+        | _REPORT_BIT
+    )
 
     try:
         result = curses.mousemask(mask)
@@ -138,26 +155,45 @@ def mouse_enabled() -> bool:
 
 
 def event_from_state(x: int, y: int, state: int) -> Optional[MouseEvent]:
-    """Translate a curses bit state into a click or scroll event.
+    """Translate a curses bit state into a click, drag, release or scroll.
 
     Kept separate from getmouse() so the mapping is testable without a
-    terminal, including the old ncurses wheel representation.
+    terminal, including the old ncurses wheel representation. Motion events
+    carry ``REPORT_MOUSE_POSITION``; when the primary button is still held that
+    is a drag, which is what the editor uses to grow a selection.
     """
     if state & _SCROLL_UP_BITS:
         return MouseEvent(x, y, "scroll", -1)
     if _SCROLL_DOWN_BITS and state & _SCROLL_DOWN_BITS:
         return MouseEvent(x, y, "scroll", 1)
-    if _LEGACY_SCROLL_DOWN and (state & _REPORT_BIT) and not (state & _PRIMARY_CLICK_BITS):
+
+    global _BUTTON_HELD
+    motion = bool(_REPORT_BIT and state & _REPORT_BIT)
+    primary = bool(_PRIMARY_CLICK_BITS and state & _PRIMARY_CLICK_BITS)
+    if _RELEASE_BITS and state & _RELEASE_BITS:
+        _BUTTON_HELD = False
+        return MouseEvent(x, y, "release")
+    if motion and primary:
+        _BUTTON_HELD = True
+        return MouseEvent(x, y, "drag")
+    if motion and _BUTTON_HELD:
+        # Legacy ncurses lost the button bits on the position report.
+        return MouseEvent(x, y, "drag")
+    if _LEGACY_SCROLL_DOWN and motion:
+        # Old ncurses builds have no button 5 and report wheel down as a bare
+        # position report while no button is held.
         return MouseEvent(x, y, "scroll", 1)
-    if state & _PRIMARY_CLICK_BITS:
+    if primary:
+        _BUTTON_HELD = True
         return MouseEvent(x, y, "click")
     return None
 
 
 def reset_input_state() -> None:
-    """Forget the last scroll, so a new view starts with a clean guard."""
-    global _LAST_SCROLL
+    """Forget the last scroll and pressed button, for a clean view start."""
+    global _LAST_SCROLL, _BUTTON_HELD
     _LAST_SCROLL = [float("-inf"), 0, 0, 0]
+    _BUTTON_HELD = False
 
 
 def normalise_event(
@@ -180,6 +216,12 @@ def normalise_event(
     when = time.monotonic() if now is None else now
     if event.is_scroll:
         _LAST_SCROLL[:] = [when, event.x, event.y, event.direction]
+        return event
+    if event.is_drag:
+        # A drag is deliberate; it must not be mistaken for a wheel echo.
+        _LAST_SCROLL[:] = [float("-inf"), 0, 0, 0]
+        return event
+    if event.is_release:
         return event
 
     previous = _LAST_SCROLL
@@ -263,13 +305,15 @@ class ClickTracker:
         self._clock = clock
         self._position: Optional[tuple] = None
         self._at = 0.0
+        self._count = 0
 
     def reset(self) -> None:
         self._position = None
         self._at = 0.0
+        self._count = 0
 
     def classify(self, event: MouseEvent) -> Optional[str]:
-        """Return single, double or None for a click event."""
+        """Return single, double, triple or None for a click event."""
         if not event.is_click:
             return None
         now = self._clock()
@@ -280,10 +324,15 @@ class ClickTracker:
         ):
             self._at = now
             return None
-        double = (
+        if (
             self._position == position
             and now - self._at <= DOUBLE_CLICK_SECONDS
-        )
+        ):
+            self._count += 1
+        else:
+            self._count = 1
         self._position = position
         self._at = now
-        return "double" if double else "single"
+        if self._count >= 3:
+            return "triple"
+        return "double" if self._count == 2 else "single"

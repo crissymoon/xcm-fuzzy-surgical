@@ -474,6 +474,8 @@ class TUIController:
             if delta:
                 self._move_selection(delta)
             return
+        if not event.is_click:
+            return
 
         top = 3
         offset = event.y - top

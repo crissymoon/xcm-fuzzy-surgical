@@ -24,6 +24,7 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Syntax highlighted results and editor context with a fallback highlighter when Pygments is unavailable
 - Preview rows scroll horizontally to the matched text instead of showing column zero
 - Mouse clicks select result and browser rows, place the caret at the clicked cell in both editors, and double clicks open the selected item
+- Drag with the mouse or trackpad to highlight text in the whole-file editor, copy it with Ctrl+C through pbcopy, wl-copy, xclip, xsel or an OSC 52 fallback, and select a word or line with a double or triple click
 - Wheel and trackpad scrolling works in the result list, directory picker, file browser and both editors, including the older ncurses wheel-down encoding used by macOS; trackpad events are accumulated so the view follows the finger, and the whole-file editor carries the caret with the scroll instead of leaving it behind
 - Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file
 - Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path
@@ -199,7 +200,10 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Arrows / Home / End | Move the cursor, wrapping between lines. |
 | Page Up / Page Down | Move one page. |
 | Mouse click | Place the cursor at the clicked cell. |
-| Mouse wheel / trackpad | Scroll four lines per mouse notch. The caret and viewport move together, so the scroll follows the caret and the text keeps its place under the pointer. |
+| Mouse drag | Highlight text by dragging. Releasing keeps the selection, and Ctrl+C copies it. |
+| Double / triple click | Select the word or the whole line under the pointer. |
+| Ctrl+A / Ctrl+C | Select the whole file, then copy the selection. Copying uses the platform clipboard tool and falls back to an OSC 52 terminal escape. |
+| Mouse wheel / trackpad | Scroll four lines per mouse notch. The caret and viewport move together, so the view follows the pointer. |
 | Enter | Split the current line. |
 | Backspace / Delete | Delete backwards or forwards, joining lines at the edges. |
 | Tab | Insert four spaces. |

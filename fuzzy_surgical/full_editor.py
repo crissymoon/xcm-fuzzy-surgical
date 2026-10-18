@@ -23,6 +23,12 @@ from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.completion_ui import CompletionPopup
 from fuzzy_surgical.devbox import DevBoxSession
 from fuzzy_surgical.diagnostics_ui import DiagnosticPanel
+from fuzzy_surgical.editor_overlays import (
+    draw_discard as draw_discard_overlay,
+    draw_help as draw_help_overlay,
+    draw_history as draw_history_overlay,
+    draw_saved as draw_saved_overlay,
+)
 from fuzzy_surgical.file_writer import FileWriteError, WriteResult, file_digest, write_text
 from fuzzy_surgical.history import SnapshotStore
 from fuzzy_surgical.lsp.completion import completion_prefix
@@ -36,7 +42,6 @@ from fuzzy_surgical.mouse import (
     reset_input_state,
 )
 from fuzzy_surgical.renderer import (
-    draw_box,
     draw_code_line,
     index_for_display_column,
     safe_addstr,
@@ -44,6 +49,7 @@ from fuzzy_surgical.renderer import (
     shorten,
     window_size,
 )
+from fuzzy_surgical.selection import Selection, copy_to_clipboard, draw_selection
 from fuzzy_surgical.text_buffer import (
     EditorOpenError,
     TextBuffer,
@@ -52,14 +58,18 @@ from fuzzy_surgical.text_buffer import (
     read_editor_file,
 )
 from fuzzy_surgical.utils import (
+    disable_interrupt_keys,
     display_path,
     is_backspace,
     is_enter,
     printable_char,
     read_key,
+    restore_terminal_mode,
 )
 
 CTRL_SPACE = 0
+CTRL_A = 1
+CTRL_C = 3
 CTRL_L = 12
 CTRL_N = 14
 CTRL_S = 19
@@ -122,6 +132,7 @@ class FullEditor:
         self.history_scroll = 0
         self.click_tracker = ClickTracker()
         self.scroll_gate = ScrollGate()
+        self.selection = Selection()
         self.completion = CompletionPopup()
         self.diagnostics_panel = DiagnosticPanel()
         self.diagnostics = []
@@ -143,6 +154,7 @@ class FullEditor:
         self.notice = ""
         self.saved_any = False
         self.last_save = None
+        self.selection.clear()
         self.completion = CompletionPopup()
         self.diagnostics_panel = DiagnosticPanel()
         self.diagnostics = []
@@ -160,6 +172,7 @@ class FullEditor:
             pass
 
         self._set_input_timeout(120)
+        mode_state = disable_interrupt_keys()
         try:
             self._draw()
             while True:
@@ -175,7 +188,7 @@ class FullEditor:
                     event = read_mouse(self.stdscr)
                     if event is not None:
                         self._handle_mouse(event)
-                    self._draw()
+                        self._draw()
                     continue
                 finished = False
                 if self.mode == "edit":
@@ -197,6 +210,7 @@ class FullEditor:
                     return self.saved_any
                 self._draw()
         finally:
+            restore_terminal_mode(mode_state)
             self._set_input_timeout(-1)
             self.completion.close()
             if self.devbox is not None:
@@ -329,6 +343,18 @@ class FullEditor:
 
     def _handle_edit_key(self, key) -> bool:
         self.error = ""
+        if key == CTRL_C:
+            self._copy_selection()
+            return False
+        if key == CTRL_A:
+            self.selection.select_all(self.buffer.lines)
+            self.buffer.set_cursor(self.selection.head_row, self.selection.head_col)
+            self.notice = f"Selected {len(self.buffer.lines)} lines. Ctrl+C copies."
+            return False
+        if key == curses.ascii.ESC and self.selection.active:
+            self.selection.clear()
+            self.notice = "Selection cleared."
+            return False
         if self.completion.visible:
             if key == curses.KEY_UP:
                 self.completion.move(-1)
@@ -429,37 +455,112 @@ class FullEditor:
             if char:
                 self.buffer.insert_text(char)
                 edited = True
+        if self.selection.active:
+            self.selection.clear()
         if edited:
             self._after_edit()
         return False
 
+    def _copy_selection(self) -> None:
+        """Copy the selected text, reporting the result in the status line."""
+        if not self.selection.has_text:
+            self.notice = (
+                "Nothing selected. Drag with the mouse, double click a word, "
+                "or press Ctrl+A."
+            )
+            return
+        text = self.selection.text(self.buffer.lines)
+        result = copy_to_clipboard(text)
+        if result.ok:
+            self.error = ""
+            self.notice = result.message
+        else:
+            self.error = result.message
+
     def _handle_mouse(self, event: MouseEvent) -> None:
-        """Apply a click or wheel tick to the active editor mode."""
+        """Apply a click, drag, release or wheel tick to the active mode."""
         if event.is_scroll:
             self._scroll_mouse(event.direction)
             return
 
         if self.mode in ("saved", "help"):
-            self.mode = "edit"
+            if event.is_click:
+                self.mode = "edit"
             return
         if self.mode == "discard":
-            self.mode = "edit"
+            if event.is_click:
+                self.mode = "edit"
             return
         if self.mode == "history":
-            self._click_history(event)
+            if event.is_click:
+                self._click_history(event)
             return
         if self.mode != "edit":
+            return
+
+        if event.is_release:
+            self.selection.release()
+            return
+        if event.is_drag:
+            if not self.selection.active:
+                return
+            position = self._drag_position(event.y, event.x)
+            if position is not None:
+                self.selection.extend(*position)
+                self.buffer.set_cursor(*position)
+                self._after_cursor_move()
+            return
+        if not event.is_click:
             return
 
         position = self._buffer_position(event.y, event.x)
         if position is None:
             return
         row, column = position
-        self.buffer.set_cursor(row, column)
+        kind = self.click_tracker.classify(event)
+        if kind is None:
+            return
         self.error = ""
         self.notice = ""
         if event.x < self._gutter_width():
             self.x_offset = 0
+        if kind == "triple":
+            self.selection.select_line(self.buffer.lines, row)
+            self.buffer.set_cursor(row, len(self.buffer.lines[row]))
+            self.notice = "Line selected. Ctrl+C copies."
+            return
+        if kind == "double":
+            self.selection.select_word(self.buffer.lines, row, column)
+            self.buffer.set_cursor(
+                self.selection.head_row, self.selection.head_col
+            )
+            self.notice = "Word selected. Ctrl+C copies."
+            return
+        self.selection.start(row, column)
+        self.buffer.set_cursor(row, column)
+
+    def _drag_position(self, y: int, x: int):
+        """Map a drag cell to the buffer, scrolling when the pointer leaves."""
+        if self.stdscr is None or self.buffer.line_count == 0:
+            return None
+        height, width = window_size(self.stdscr)
+        top = 2
+        rows = self._content_rows(height)
+        if y < top:
+            self._scroll_view(-1)
+            row = self.scroll_row
+        elif y >= top + rows:
+            self._scroll_view(1)
+            row = self.scroll_row + rows - 1
+        else:
+            row = self.scroll_row + (y - top)
+        row = max(0, min(self.buffer.line_count - 1, row))
+        gutter = self._gutter_width()
+        available = max(1, width - gutter - 1)
+        offset = max(0, min(available - 1, x - gutter))
+        display_column = self.x_offset + offset
+        line = self.buffer.lines[row]
+        return row, index_for_display_column(line, display_column)
 
     def _scroll_mouse(self, direction: int) -> None:
         delta = self.scroll_gate.lines(direction)
@@ -629,6 +730,7 @@ class FullEditor:
         self.disk_digest = file_digest(self.path)
         self.scroll_row = 0
         self.x_offset = 0
+        self.selection.clear()
         self.notice = "Reloaded from disk."
 
     def _open_history(self) -> None:
@@ -680,6 +782,7 @@ class FullEditor:
         self.saved_line = 1
         self.scroll_row = 0
         self.x_offset = 0
+        self.selection.clear()
         self.notice = (
             "Snapshot loaded into the buffer as unsaved text. Press Ctrl+S to write it."
         )
@@ -752,7 +855,7 @@ class FullEditor:
             1,
             0,
             "Ctrl+S save  F2 save  F6 snapshots  F8 reload  "
-            "^N complete  F9 issues  F1 help"[: width - 1],
+            "^N complete  F9 issues  ^C copy  F1 help"[: width - 1],
             self.theme.attr("ui.dim", dim=True),
         )
 
@@ -798,6 +901,18 @@ class FullEditor:
                 max_width=available,
                 x_offset=self.x_offset,
             )
+            draw_selection(
+                self.stdscr,
+                screen_row,
+                gutter_width,
+                self.buffer.lines[row_index],
+                self.selection.span(
+                    row_index, len(self.buffer.lines[row_index])
+                ),
+                self.x_offset,
+                available,
+                self.theme,
+            )
 
         if self.scroll_row > 0:
             safe_addstr(self.stdscr, top, max(0, width - 8), " ^ more", curses.A_DIM)
@@ -807,7 +922,10 @@ class FullEditor:
         caret_row = top + (self.buffer.cursor_row - self.scroll_row)
         caret_col = gutter_width + caret_display - self.x_offset
         if 0 <= caret_col < width - 1 and 0 <= caret_row < height - 2:
-            safe_addstr(self.stdscr, caret_row, caret_col, " ", curses.A_REVERSE)
+            rendered = sanitize(self.buffer.lines[self.buffer.cursor_row])
+            caret_index = caret_display - self.x_offset
+            caret_char = rendered[caret_index] if 0 <= caret_index < len(rendered) else " "
+            safe_addstr(self.stdscr, caret_row, caret_col, caret_char, curses.A_REVERSE)
             try:
                 self.stdscr.move(caret_row, caret_col)
             except curses.error:
@@ -843,6 +961,8 @@ class FullEditor:
     def _draw_status(self, height: int, width: int) -> None:
         state = "modified" if self.buffer.dirty else "saved"
         left = f" Esc back  {state} "
+        if self.selection.has_text:
+            left += " selection "
         if self.assist_status:
             left += f" {self.assist_status} "
         if self._completion_pending and self.completion.requested:
@@ -856,151 +976,35 @@ class FullEditor:
 
     def _draw_saved(self, height: int, width: int) -> None:
         saved = self.last_save
-        path = saved.path if saved is not None else self.path
-        written = f"{saved.bytes_written} bytes" if saved is not None else "written"
-        lines = [
-            "Saved to disk",
-            "",
-            path,
-            "",
-            f"{self.buffer.line_count} lines, {written}, verified",
-            f"History: {self.history_note}",
-            "",
-            f"Line {self.saved_line} now reads on disk:",
-            f"  {sanitize(self.saved_proof)}",
-            "",
-            "Press any key to keep editing.",
-        ]
-        box_width = min(width - 2, max(len(line) for line in lines) + 4)
-        box_height = len(lines) + 2
-        top = max(0, (height - box_height) // 2)
-        left = max(0, (width - box_width) // 2)
-        overlay = self.theme.attr("ui.overlay")
-        draw_box(self.stdscr, top, left, box_height, box_width, "Saved", self.theme, overlay)
-        for offset, line in enumerate(lines, 1):
-            attr = overlay
-            if offset == 1:
-                attr = self.theme.attr("ui.accent", bold=True)
-            elif offset == 3:
-                attr = self.theme.attr("ui.path")
-            elif offset == 9:
-                attr = self.theme.attr("edit.changed", bold=True)
-            elif offset == 5:
-                attr = self.theme.attr("ui.accent")
-            safe_addstr(self.stdscr, top + offset, left + 2, line[: box_width - 4], attr)
+        draw_saved_overlay(
+            self.stdscr,
+            self.theme,
+            height,
+            width,
+            path=saved.path if saved is not None else self.path,
+            line_count=self.buffer.line_count,
+            byte_count=saved.bytes_written if saved is not None else None,
+            history_note=self.history_note,
+            saved_line=self.saved_line,
+            saved_proof=self.saved_proof,
+        )
 
     def _draw_discard(self, height: int, width: int) -> None:
-        safe_addstr(
-            self.stdscr,
-            2,
-            0,
-            "Unsaved changes. s saves and exits, d discards, Esc keeps editing."[: width - 1],
-            self.theme.attr("ui.error", bold=True),
-        )
-        safe_addstr(
-            self.stdscr,
-            3,
-            0,
-            f"File: {shorten(display_path(Path(self.path)), max(10, width - 8))}",
-            self.theme.attr("ui.path"),
-        )
-        safe_addstr(
-            self.stdscr,
-            5,
-            0,
-            "Nothing has been written to disk yet."[: width - 1],
-            self.theme.attr("ui.dim", dim=True),
+        draw_discard_overlay(
+            self.stdscr, self.theme, height, width, path=self.path
         )
 
     def _draw_history(self, height: int, width: int) -> None:
-        rows = max(1, height - 6)
-        count = len(self.history_entries)
         self._ensure_history_visible()
-        end = min(count, self.history_scroll + rows)
-        box_height = min(height - 1, rows + 4)
-        box_width = min(width - 2, max(48, width - 8))
-        top = max(1, (height - box_height) // 2)
-        left = max(0, (width - box_width) // 2)
-        overlay = self.theme.attr("ui.overlay")
-        draw_box(
+        draw_history_overlay(
             self.stdscr,
-            top,
-            left,
-            box_height,
-            box_width,
-            f"SQLite snapshots ({count})",
             self.theme,
-            overlay,
-        )
-        header = "  when                 size    reason"
-        safe_addstr(self.stdscr, top + 1, left + 2, header[: box_width - 4], overlay)
-        for offset, index in enumerate(range(self.history_scroll, end), 2):
-            revision = self.history_entries[index]
-            stamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(revision.created_at))
-            label = (
-                f"{stamp}  {revision.original_size:>8}  {revision.reason or 'save'}"
-            )
-            selected = index == self.history_index
-            attr = overlay
-            if selected:
-                attr = self.theme.attr("ui.accent", bold=True) | curses.A_REVERSE
-            safe_addstr(self.stdscr, top + offset, left + 2, label[: box_width - 4], attr)
-        footer = "Enter loads into the buffer  Esc closes"
-        safe_addstr(
-            self.stdscr,
-            top + box_height - 2,
-            left + 2,
-            footer[: box_width - 4],
-            overlay,
+            height,
+            width,
+            entries=self.history_entries,
+            selected=self.history_index,
+            scroll=self.history_scroll,
         )
 
     def _draw_help(self, height: int, width: int) -> None:
-        lines = [
-            "Precise movement",
-            "  Left / Right   move one character, wrapping lines",
-            "  Up / Down      move one line",
-            "  Home / End     start or end of line",
-            "  PgUp / PgDn    move one page",
-            "  Mouse click    place the cursor at the clicked cell",
-            "  Mouse wheel    scroll the file with the caret, trackpads follow",
-            "",
-            "Editing",
-            "  Enter          split the line",
-            "  Backspace      delete backwards, joining lines at column 0",
-            "  Delete         delete forwards, joining lines at the end",
-            "  Tab            insert four spaces",
-            "  Ctrl+Z         undo",
-            "  Ctrl+Y         redo",
-            "",
-            "Dev box (language server and linters)",
-            "  Ctrl+N         request completions now (F12 and Ctrl+Space too)",
-            "  typing         suggestions appear after two characters",
-            "  Up / Down      choose a suggestion, Enter or Tab inserts",
-            "  Esc            close the suggestion list without inserting",
-            "  F9 / Ctrl+L    show issues, Enter jumps to the line",
-            "",
-            "Saving and safety",
-            "  Ctrl+S / F2    write and verify the disk copy",
-            "  F6             browse SQLite snapshots, Enter loads one",
-            "  F8             reload the file from disk",
-            "  Esc            leave, asking before discarding changes",
-            "",
-            "Press any key to return.",
-        ]
-        box_width = min(width - 2, max(len(line) for line in lines) + 4)
-        box_height = len(lines) + 2
-        top = max(0, (height - box_height) // 2)
-        left = max(0, (width - box_width) // 2)
-        overlay = self.theme.attr("ui.overlay")
-        draw_box(
-            self.stdscr,
-            top,
-            left,
-            box_height,
-            box_width,
-            "File editor controls",
-            self.theme,
-            overlay,
-        )
-        for offset, line in enumerate(lines, 1):
-            safe_addstr(self.stdscr, top + offset, left + 2, line[: box_width - 4], overlay)
+        draw_help_overlay(self.stdscr, self.theme, height, width)

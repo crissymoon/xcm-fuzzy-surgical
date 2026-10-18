@@ -144,6 +144,8 @@ class DirectoryPicker:
             if delta:
                 self._move(delta)
             return None
+        if not event.is_click:
+            return None
         top = 4
         offset = event.y - top
         if offset < 0 or offset >= self._visible_rows():
