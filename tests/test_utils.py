@@ -67,3 +67,39 @@ def test_enter_accepts_the_keypad_enter_code():
     import curses
 
     assert is_enter(curses.KEY_ENTER)
+
+
+def test_disable_flow_control_clears_the_input_flags(monkeypatch):
+    """Ctrl+S is XOFF unless IXON is cleared from iflag, not lflag."""
+    import sys
+    import types
+
+    from fuzzy_surgical import utils
+
+    original = [1483, 0, 0, 0, 0, 0, [b"\x00"] * 32]
+    captured = {}
+
+    class FakeTermios:
+        IXON = 512
+        IXOFF = 1024
+        TCSADRAIN = 1
+        error = OSError
+
+        @staticmethod
+        def tcgetattr(_descriptor):
+            return list(original)
+
+        @staticmethod
+        def tcsetattr(_descriptor, _when, attributes):
+            captured["attributes"] = list(attributes)
+
+    fake = FakeTermios()
+    monkeypatch.setattr(utils.os, "name", "posix")
+    monkeypatch.setitem(sys.modules, "termios", fake)
+    monkeypatch.setattr(sys, "stdin", types.SimpleNamespace(fileno=lambda: 0))
+
+    state = utils.disable_flow_control()
+
+    assert state is not None
+    assert captured["attributes"][0] == 1483 & ~(512 | 1024)
+    assert captured["attributes"][3] == original[3]

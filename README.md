@@ -6,9 +6,9 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://github.com/crissymoon/xcm-fuzzy-surgical)
 [![Website](https://img.shields.io/badge/website-xcaliburmoon.net-black.svg)](https://xcaliburmoon.net/)
 
-A terminal fuzzy finder with syntax highlighted results and surgical line replacement.
+A terminal fuzzy finder with syntax highlighted results, surgical line replacement and a file browser.
 
-FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, writes an edited line to disk on Enter, and then shows the text read back from the file.
+FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, writes an edited line to disk on Enter, and then shows the text read back from the file. F3 opens a safe file browser, F4 opens the selected file in a whole-file editor, and every save can store the previous version in a local SQLite database for recovery.
 
 Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 
@@ -35,6 +35,10 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Symlinked files are written through to their target and external edits are never silently overwritten
 - Files changed by other programs are picked up automatically, and F5 rebuilds the index
 - Bounded, crash safe indexing with permission, binary file and symlink loop guards
+- F3 opens a fuzzy file browser with folders and text files, safe one-folder-at-a-time navigation and symlink loop guards
+- F4 opens the selected file in a whole-file editor with a cursor, undo and redo, page scrolling and syntax colors
+- Every line or whole-file save first stores the previous version in a local SQLite database, and F6 lists snapshots to restore
+- Snapshots stay in the user data directory instead of beside the source tree, and --no-history turns them off
 - Single file JSON metadata that regenerates this README through a checked in script
 
 ## Installation
@@ -107,6 +111,9 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | -i, --ignore | PATTERN ... | Directory names or glob patterns to skip while indexing. |
 | -e, --extensions | EXT ... | Only index these file extensions, for example .py or py. |
 | --no-picker | none | Skip the picker and search the current directory. |
+| --no-history | none | Do not store SQLite snapshots of edited files. |
+| --history-db | PATH | Use a different SQLite history database. |
+| --history-limit | INT | Snapshots kept per file. Default 25. |
 | --version | none | Print the installed version and exit. |
 | --max-files | INT | Maximum number of files to index. Default 8000. |
 | --max-file-size | INT | Maximum bytes read per file. Default 1000000. |
@@ -125,6 +132,8 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Page Up / Page Down | Move the selection one page. |
 | Left / Right | Scroll long code lines horizontally. |
 | Enter | Edit the selected line after reloading it from disk. |
+| F3 | Browse folders and edit whole files. |
+| F4 | Open the selected file in the whole-file editor. |
 | F2 | Open the directory picker. |
 | F5 | Reload the whole index, for example after a branch switch. |
 | F1 | Show help. |
@@ -142,7 +151,36 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Backspace | Delete filter text, or move to the parent directory when the filter is empty. |
 | Esc | Cancel and return to the previous view. |
 
-### Editor
+### File browser
+
+| Key | Action |
+| --- | --- |
+| F3 | Open the browser from the search view. |
+| Type | Fuzzy filter the current folder. |
+| Up / Down | Move the selection. |
+| Enter | Open a folder or edit the selected file in the full editor. |
+| Backspace | Delete filter text, or move to the parent folder when the filter is empty. |
+| Ctrl+U | Clear the filter. |
+| Esc | Return to the search view. |
+
+### Full file editor
+
+| Key | Action |
+| --- | --- |
+| F4 | Open the selected file straight from the search view. |
+| Arrows / Home / End | Move the cursor, wrapping between lines. |
+| Page Up / Page Down | Move one page. |
+| Enter | Split the current line. |
+| Backspace / Delete | Delete backwards or forwards, joining lines at the edges. |
+| Tab | Insert four spaces. |
+| Ctrl+Z / Ctrl+Y | Undo and redo. |
+| Ctrl+S / F2 | Write and verify the disk copy, after storing the previous version in SQLite. |
+| F6 | List SQLite snapshots. Enter loads one into the buffer as unsaved text. |
+| F8 | Reload the file from disk. |
+| Esc | Ask before discarding unsaved changes. |
+| F1 | Show help. |
+
+### Line editor
 
 | Key | Action |
 | --- | --- |
@@ -167,7 +205,7 @@ The indexer never follows directory symlinks and skips unreadable, binary or ove
 | Lines per file | 5,000 |
 | Lines in total | 500,000 |
 
-- Writes happen only on Enter, F2, Ctrl+S or Ctrl+W, keep the existing inode so open editors and pagers see the change, and preserve CRLF endings and a missing final newline.
+- Writes happen only on an explicit save key, keep the existing inode so open editors and pagers see the change, and preserve CRLF endings and a missing final newline.
 - Every save is read back through both the opened path and the real target before it is reported, and the absolute path is shown in the editor and the status bar.
 - The modification time is nudged forward when the filesystem timestamp resolution is coarse, and the containing directory is synced.
 - If another program rewrites a just saved file, the status bar says so within twenty seconds.
@@ -176,6 +214,11 @@ The indexer never follows directory symlinks and skips unreadable, binary or ove
 - Symlinks are written through to their real target, and a file that changed on disk is reloaded instead of being overwritten.
 - Files modified by other programs are detected while the search view is idle, and F5 rebuilds the whole index.
 - The directory picker validates every target and falls back to a readable directory instead of crashing.
+- The F3 browser lists one folder at a time, skips ignored and binary files, never follows directory symlinks and caps a folder at 5000 entries.
+- The full editor refuses binary files, files over 8 MB and files over 200,000 lines instead of loading them.
+- Snapshots live in one SQLite database in the user data directory: Application Support on macOS, LOCALAPPDATA on Windows and the XDG data directory on Linux.
+- Snapshot defaults are 25 versions per file, 4 MB per snapshot and 64 MB in total, and old snapshots are pruned automatically.
+- History is best effort. A missing or locked database never blocks a save, and --no-history disables snapshots entirely.
 - Terminal resizes and small terminals are guarded, so drawing is clipped instead of raising.
 
 ## Development

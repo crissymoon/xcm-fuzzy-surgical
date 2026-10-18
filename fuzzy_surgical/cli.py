@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fuzzy_surgical import __version__
+from fuzzy_surgical.history import DEFAULT_PER_FILE_LIMIT, SnapshotStore
 from fuzzy_surgical.indexer import FileIndexer, IndexLimits
 from fuzzy_surgical.utils import safe_directory, safe_start_directory
 
@@ -50,6 +51,23 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-picker",
         action="store_true",
         help="Skip the directory picker and search the current directory",
+    )
+    parser.add_argument(
+        "--no-history",
+        action="store_true",
+        help="Do not store SQLite snapshots of edited files",
+    )
+    parser.add_argument(
+        "--history-db",
+        default=None,
+        metavar="PATH",
+        help="Path to the SQLite history database",
+    )
+    parser.add_argument(
+        "--history-limit",
+        type=int,
+        default=DEFAULT_PER_FILE_LIMIT,
+        help=f"Snapshots kept per file (default: {DEFAULT_PER_FILE_LIMIT})",
     )
     parser.add_argument(
         "--max-files",
@@ -99,7 +117,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         or args.max_file_size <= 0
         or args.max_lines_per_file <= 0
         or args.max_total_lines <= 0
+        or args.history_limit <= 0
     ):
+        print("fuzzy-surgical: --history-limit must be greater than zero", file=sys.stderr)
         return 2
 
     root: Optional[Path] = None
@@ -128,12 +148,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Details: {exc}", file=sys.stderr)
         return 1
 
+    history = SnapshotStore(
+        database_path=args.history_db,
+        per_file_limit=args.history_limit,
+        enabled=not args.no_history,
+    )
+    if not args.no_history and not history.available:
+        print(f"fuzzy-surgical: {history.error}", file=sys.stderr)
+
     indexer = FileIndexer(limits=limits)
     controller = TUIController(
         indexer,
         root_dir=root,
         ignore_dirs=args.ignore,
         extensions=args.extensions,
+        history=history,
     )
 
     start_dir = safe_start_directory(Path.cwd()) if root is None else root
@@ -148,4 +177,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     except Exception as exc:  # keep the terminal usable for the next command
         print(f"fuzzy-surgical: {exc}", file=sys.stderr)
         return 1
+    finally:
+        history.close()
     return 0

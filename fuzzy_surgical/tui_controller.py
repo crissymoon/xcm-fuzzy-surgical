@@ -13,8 +13,11 @@ from fuzzy_surgical import __version__
 from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.directory_picker import DirectoryPicker
 from fuzzy_surgical.editor_controller import EditorController
+from fuzzy_surgical.file_browser import FileBrowser
 from fuzzy_surgical.file_writer import file_digest
+from fuzzy_surgical.full_editor import EditorOpenError, FullEditor
 from fuzzy_surgical.fuzzy_matcher import FuzzyMatcher
+from fuzzy_surgical.history import SnapshotStore
 from fuzzy_surgical.indexer import FileIndexer
 from fuzzy_surgical.line_jump import LineJumpResolver
 from fuzzy_surgical.query_parser import LineReference, parse_line_reference
@@ -63,15 +66,17 @@ class TUIController:
         root_dir: Optional[Path] = None,
         ignore_dirs: Optional[Sequence[str]] = None,
         extensions: Optional[Sequence[str]] = None,
+        history: Optional[SnapshotStore] = None,
     ) -> None:
         self.indexer = indexer
         self.root_dir = root_dir
         self.ignore_dirs = list(ignore_dirs) if ignore_dirs is not None else None
         self.extensions = list(extensions) if extensions is not None else None
+        self.history = history
 
         self.matcher = FuzzyMatcher()
         self.jump_resolver = LineJumpResolver()
-        self.editor = EditorController()
+        self.editor = EditorController(history=history)
         self.theme = Theme()
 
         self.file_lines: Dict[str, List[tuple]] = {}
@@ -297,6 +302,10 @@ class TUIController:
                 self._update_results()
             elif key == curses.KEY_F1:
                 self.help_visible = True
+            elif key == curses.KEY_F3:
+                self._open_browser()
+            elif key == curses.KEY_F4:
+                self._open_full_editor()
             elif key == REFRESH_KEY:
                 self._reload_index()
             elif is_enter(key):
@@ -564,9 +573,12 @@ class TUIController:
 
     def _draw_status(self, height: int, width: int) -> None:
         if width < 72:
-            left = " Enter edit  F2 dirs  F5 reload  Esc quit "
+            left = " Enter edit  F3 files  F4 editor  Esc quit "
         else:
-            left = " Enter edit  F2 directory  F5 reload  F1 help  Esc quit  Ctrl+X quit "
+            left = (
+                " Enter edit  F3 files  F4 file editor  F2 directory  "
+                "F5 reload  F1 help  Esc quit "
+            )
         if self.results:
             position = self.selected_idx + 1
             right = f" {position}/{len(self.results)} "
@@ -594,6 +606,8 @@ class TUIController:
             "PgUp / PgDn    jump one page",
             "Left / Right   scroll long code lines",
             "Enter          edit the selected line",
+            "F3             browse folders and edit whole files",
+            "F4             open the selected file in the full editor",
             "F2             choose another directory",
             "F5             reload changed files from disk",
             "Ctrl+U         clear the search",
@@ -679,3 +693,71 @@ class TUIController:
                 self.saved_at = time.monotonic()
         self.last_refresh = time.monotonic()
         self._update_results(preserve=(file_path, line_num))
+
+    def _open_browser(self) -> None:
+        """Browse the indexed tree and edit whole files."""
+        preserve = self._selected_target()
+        try:
+            changed = FileBrowser(
+                self.stdscr,
+                self.theme,
+                self.root_dir or safe_start_directory(),
+                history=self.history,
+                ignore_names=self.ignore_dirs,
+                extensions=self.extensions,
+            ).run()
+        except Exception as exc:  # the browser must never take down the search
+            self._set_notice(f"File browser failed: {exc}", 8.0)
+            return
+        try:
+            curses.curs_set(1)
+        except curses.error:
+            pass
+        if changed:
+            self._refresh_after_save(changed, preserve)
+        else:
+            self._update_results(preserve=preserve)
+
+    def _open_full_editor(self) -> None:
+        """Open the selected file in the whole-file editor."""
+        if not self.results:
+            self._set_notice("Search for a line first, then press F4.", 6.0)
+            return
+        index = max(0, min(self.selected_idx, len(self.results) - 1))
+        file_path, line_num = self.results[index][:2]
+        preserve = (file_path, line_num)
+        try:
+            self.indexer.reindex_file(file_path)
+        except Exception:
+            pass
+        self.file_lines = self.indexer.file_lines
+        try:
+            saved = FullEditor(self.stdscr, self.theme, self.history).edit(Path(file_path))
+        except EditorOpenError as exc:
+            self._update_results(preserve=preserve)
+            self._set_notice(str(exc), 8.0)
+            return
+        except (OSError, curses.error) as exc:
+            self._update_results(preserve=preserve)
+            self._set_notice(f"Could not open that file: {exc}", 8.0)
+            return
+        try:
+            curses.curs_set(1)
+        except curses.error:
+            pass
+        if saved:
+            self._refresh_after_save(file_path, preserve)
+        else:
+            self._update_results(preserve=preserve)
+
+    def _refresh_after_save(self, file_path: str, preserve: Optional[Tuple[str, int]]) -> None:
+        """Reindex one saved file and keep the search selection stable."""
+        try:
+            self.indexer.reindex_file(file_path)
+        except Exception:
+            pass
+        self.file_lines = self.indexer.file_lines
+        self.last_refresh = time.monotonic()
+        self._update_results(preserve=preserve)
+        name = display_path(Path(file_path))
+        self._set_notice(f"Saved {name}", 8.0)

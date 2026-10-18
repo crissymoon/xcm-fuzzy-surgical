@@ -10,6 +10,7 @@ import curses.ascii
 
 from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.file_writer import FileWriteError, WriteResult, write_text
+from fuzzy_surgical.history import SnapshotStore
 from fuzzy_surgical.renderer import (
     draw_box,
     draw_code_line,
@@ -33,8 +34,13 @@ CTRL_W = 23
 class EditorController:
     """Edits nearby lines and writes changes back to the same file."""
 
-    def __init__(self, theme: Optional[Theme] = None) -> None:
+    def __init__(
+        self,
+        theme: Optional[Theme] = None,
+        history: Optional[SnapshotStore] = None,
+    ) -> None:
         self.theme = theme
+        self.history = history
         self.stdscr = None
         self.file_path = ""
         self.line_num = 1
@@ -48,6 +54,7 @@ class EditorController:
         self.save_error = ""
         self.last_save: Optional[WriteResult] = None
         self.last_save_line = 0
+        self.saved_history_note = ""
 
     def edit_line(
         self,
@@ -115,6 +122,7 @@ class EditorController:
         self.save_error = ""
         self.last_save = None
         self.last_save_line = 0
+        self.saved_history_note = ""
         self.saved_proof = ""
         self.saved_line_number = 0
         self.saved_edit_count = 0
@@ -460,6 +468,8 @@ class EditorController:
                 "Press any key to return.",
             ]
         )
+        if self.saved_history_note:
+            lines.insert(len(lines) - 2, f"History: {self.saved_history_note}")
         box_width = min(width - 2, max(len(line) for line in lines) + 4)
         box_height = len(lines) + 2
         top = max(0, (height - box_height) // 2)
@@ -545,6 +555,19 @@ class EditorController:
                 overlay,
             )
 
+    def _snapshot_before_write(self, text: str) -> str:
+        """Store the pre-edit text in SQLite when history is available."""
+        if self.history is None:
+            return ""
+        if not self.history.available:
+            return "history disabled"
+        snapshot = self.history.record_text(self.file_path, text, reason="line edit")
+        if self.history.error:
+            return self.history.error
+        if snapshot is None:
+            return "no new snapshot needed"
+        return "previous version stored in SQLite"
+
     def _apply_changes(self) -> bool:
         """Apply edited lines after checking that the disk copy is unchanged."""
         self.save_error = ""
@@ -583,6 +606,8 @@ class EditorController:
             if not ending and number < len(lines):
                 ending = "\n"
             lines[number - 1] = new_text + ending
+
+        self.saved_history_note = self._snapshot_before_write("".join(lines))
 
         try:
             result = write_text(self.file_path, "".join(lines))

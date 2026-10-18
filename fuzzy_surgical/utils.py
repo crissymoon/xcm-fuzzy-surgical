@@ -157,7 +157,9 @@ def disable_flow_control():
         return None
     try:
         updated = list(original)
-        updated[3] = original[3] & ~termios.IXON
+        # IXON and IXOFF live in iflag, not lflag. Clearing only lflag leaves
+        # the terminal eating Ctrl+S as XOFF, which made the save key vanish.
+        updated[0] = original[0] & ~(termios.IXON | termios.IXOFF)
         termios.tcsetattr(descriptor, termios.TCSADRAIN, updated)
     except (OSError, termios.error):
         return None
