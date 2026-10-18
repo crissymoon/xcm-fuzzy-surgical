@@ -2,9 +2,9 @@
   "schema_version": 1,
   "name": "fuzzy-surgical",
   "display_name": "FuzzySurgical",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "tagline": "A terminal fuzzy finder with syntax highlighted results and surgical line replacement.",
-  "summary": "FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, and replaces a single line only after an explicit confirmation.",
+  "summary": "FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, and replaces a single line only after an explicit review.",
   "author": {
     "name": "Crissy Moon",
     "website": "https://xcaliburmoon.net/"
@@ -45,8 +45,9 @@
     "Preview rows scroll horizontally to the matched text instead of showing column zero",
     "Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file",
     "Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path",
-    "Surgical line editing with surrounding context and an explicit confirmation step",
+    "Surgical line editing with surrounding context and an explicit review step",
     "Writes keep the existing inode, so Sublime, less and tail -f see the change immediately",
+    "Save notice in the status bar reports the file, line and byte count that reached disk",
     "Symlinked files are written through to their target and external edits are never silently overwritten",
     "Files changed by other programs are picked up automatically, and F5 rebuilds the index",
     "Bounded, crash safe indexing with permission, binary file and symlink loop guards",
@@ -174,7 +175,7 @@
         ["Left / Right", "Move the cursor."],
         ["Home / End", "Jump to the start or end of the line."],
         ["Backspace / Delete", "Edit the line."],
-        ["Enter", "Confirm the edit, then press y to write or n to cancel."],
+        ["Enter", "Review the edit, then press Enter or y to write, or n to cancel."],
         ["Esc", "Discard all edits."],
         ["F1", "Show help."]
       ]
@@ -189,7 +190,9 @@
       ["Lines in total", "500,000"]
     ],
     "notes": [
-      "Writes only happen after confirmation, keep the existing inode so open editors and pagers see the change, and preserve CRLF endings and a missing final newline.",
+      "Writes only happen after review, keep the existing inode so open editors and pagers see the change, and preserve CRLF endings and a missing final newline.",
+      "Every save is read back from disk before it is reported, and the modification time is nudged forward when the filesystem timestamp resolution is coarse.",
+      "Read-only files are written in place by briefly adding owner write permission, so they also keep their inode.",
       "Symlinks are written through to their real target, and a file that changed on disk is reloaded instead of being overwritten.",
       "Files modified by other programs are detected while the search view is idle, and F5 rebuilds the whole index.",
       "The directory picker validates every target and falls back to a readable directory instead of crashing.",

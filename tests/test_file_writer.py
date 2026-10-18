@@ -60,3 +60,44 @@ def test_write_read_only_file_keeps_mode(tmp_path):
 def test_write_missing_file_raises(tmp_path):
     with pytest.raises(FileWriteError):
         write_text(str(tmp_path / "missing.py"), "data\n")
+
+
+def test_write_result_reports_size_and_newer_mtime(tmp_path):
+    path = tmp_path / "app.py"
+    path.write_text("old\n", encoding="utf-8")
+    before = path.stat().st_mtime_ns
+
+    result = write_text(str(path), "new line\n")
+
+    assert result.path == os.path.realpath(str(path))
+    assert result.bytes_written == len("new line\n")
+    assert result.inode_replaced is False
+    assert path.stat().st_mtime_ns > before
+
+
+def test_open_handle_sees_the_new_content(tmp_path):
+    path = tmp_path / "app.py"
+    path.write_text("old\n", encoding="utf-8")
+
+    with open(path, "r", encoding="utf-8") as handle:
+        write_text(str(path), "new\n")
+        handle.seek(0)
+        assert handle.read() == "new\n"
+
+
+def test_read_only_file_keeps_inode_on_posix(tmp_path):
+    if os.name == "nt":
+        pytest.skip("POSIX permission bits are required")
+    path = tmp_path / "app.py"
+    path.write_text("old\n", encoding="utf-8")
+    path.chmod(0o444)
+    before = path.stat().st_ino
+    try:
+        result = write_text(str(path), "new\n")
+
+        assert path.stat().st_ino == before
+        assert result.inode_replaced is False
+        assert stat.S_IMODE(path.stat().st_mode) == 0o444
+        assert path.read_text(encoding="utf-8") == "new\n"
+    finally:
+        path.chmod(0o644)

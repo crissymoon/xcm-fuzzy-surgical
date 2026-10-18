@@ -149,7 +149,7 @@ class FileIndexer:
                 self._index_file(Path(file_path))
                 changed.append(file_path)
                 continue
-            if (info.st_mtime_ns, info.st_size) == signature:
+            if (info.st_mtime_ns, info.st_size, info.st_ino) == signature:
                 continue
             self._index_file(Path(file_path))
             changed.append(file_path)
@@ -199,7 +199,7 @@ class FileIndexer:
 
         self.file_lines[key] = lines
         self.total_lines += len(lines)
-        self.signatures[key] = (info.st_mtime_ns, info.st_size)
+        self.signatures[key] = (info.st_mtime_ns, info.st_size, info.st_ino)
 
     def get_file_context(
         self,

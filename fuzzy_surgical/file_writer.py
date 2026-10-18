@@ -6,6 +6,10 @@ looking at stale data, and replacing a symlink turns the link into a regular
 file while the real target keeps the old contents. This module writes through
 the resolved target and keeps the inode whenever permissions allow it, then
 falls back to an atomic replace that preserves the original mode.
+
+Every write is read back before it is reported as successful, and the
+modification time is nudged forward when the filesystem stores it with a
+coarse resolution. That keeps timestamp based reload checks working.
 """
 
 from __future__ import annotations
@@ -14,11 +18,24 @@ import errno
 import os
 import stat
 import tempfile
+import time
+from dataclasses import dataclass
 from typing import Optional
 
 
 class FileWriteError(Exception):
     """Raised when a file cannot be written safely."""
+
+
+@dataclass(frozen=True)
+class WriteResult:
+    """Facts about a successful write, used for the on screen notice."""
+
+    path: str
+    bytes_written: int
+    inode_replaced: bool
+    mtime_ns: int
+    permission_adjusted: bool = False
 
 
 def resolve_target(file_path: str) -> str:
@@ -29,8 +46,8 @@ def resolve_target(file_path: str) -> str:
         return file_path
 
 
-def write_text(file_path: str, text: str) -> str:
-    """Write text to file_path and return the real path that was written.
+def write_text(file_path: str, text: str) -> WriteResult:
+    """Write text to file_path and return details about the write.
 
     Raises FileWriteError with a short, user facing message on failure.
     """
@@ -50,25 +67,55 @@ def write_text(file_path: str, text: str) -> str:
     except OSError:
         original = None
 
+    previous_mtime_ns = info.st_mtime_ns
+    inode_replaced = False
+    permission_adjusted = False
+
     try:
-        _write_in_place(target, data)
-        return target
+        _write_in_place_with_retry(target, data)
     except PermissionError:
-        # Read-only files still change when the directory is writable.
-        try:
-            _replace_atomically(target, data, stat.S_IMODE(info.st_mode))
-            return target
-        except OSError as fallback_exc:
-            _restore(target, original)
-            raise FileWriteError(_message(fallback_exc)) from fallback_exc
+        if _write_with_mode_override(target, data, info.st_mode):
+            permission_adjusted = True
+        else:
+            # Read-only files still change when the directory is writable.
+            try:
+                _replace_atomically(target, data, stat.S_IMODE(info.st_mode))
+                inode_replaced = True
+            except OSError as fallback_exc:
+                _restore(target, original)
+                raise FileWriteError(_message(fallback_exc)) from fallback_exc
     except OSError as exc:
         _restore(target, original)
         raise FileWriteError(_message(exc)) from exc
+
+    if not _content_matches(target, data):
+        raise FileWriteError(
+            "The write could not be verified. Another program may be holding the file."
+        )
+
+    mtime_ns = _stat_mtime(target)
+    if mtime_ns <= previous_mtime_ns:
+        mtime_ns = _bump_mtime(target, mtime_ns, previous_mtime_ns)
+
+    return WriteResult(
+        path=target,
+        bytes_written=len(data),
+        inode_replaced=inode_replaced,
+        mtime_ns=mtime_ns,
+        permission_adjusted=permission_adjusted,
+    )
 
 
 def _read_bytes(target: str) -> bytes:
     with open(target, "rb") as handle:
         return handle.read()
+
+
+def _content_matches(target: str, data: bytes) -> bool:
+    try:
+        return _read_bytes(target) == data
+    except OSError:
+        return False
 
 
 def _write_in_place(target: str, data: bytes) -> None:
@@ -79,6 +126,45 @@ def _write_in_place(target: str, data: bytes) -> None:
         handle.truncate()
         handle.flush()
         _fsync(handle.fileno())
+
+
+def _write_in_place_with_retry(target: str, data: bytes, attempts: int = 4) -> None:
+    """Retry brief sharing violations, mostly seen on Windows."""
+    for attempt in range(attempts):
+        try:
+            _write_in_place(target, data)
+            return
+        except PermissionError:
+            if attempt == attempts - 1 or os.name != "nt":
+                raise
+            time.sleep(0.05)
+        except OSError as exc:
+            if exc.errno not in (errno.EBUSY, errno.ETXTBSY) or attempt == attempts - 1:
+                raise
+            time.sleep(0.05)
+
+
+def _write_with_mode_override(target: str, data: bytes, mode: int) -> bool:
+    """Temporarily add owner write permission, keeping the inode.
+
+    This matters for read-only files, which would otherwise need an atomic
+    replace and lose the inode that open editors are watching.
+    """
+    original_mode = stat.S_IMODE(mode)
+    try:
+        os.chmod(target, original_mode | stat.S_IWUSR)
+    except OSError:
+        return False
+    try:
+        _write_in_place_with_retry(target, data)
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            os.chmod(target, original_mode)
+        except OSError:
+            pass
 
 
 def _replace_atomically(target: str, data: bytes, mode: int) -> None:
@@ -122,6 +208,33 @@ def _restore(target: str, original: Optional[bytes]) -> None:
             _fsync(handle.fileno())
     except OSError:
         pass
+
+
+def _stat_mtime(target: str) -> int:
+    try:
+        return os.stat(target).st_mtime_ns
+    except OSError:
+        return 0
+
+
+def _bump_mtime(target: str, current_ns: int, previous_ns: int) -> int:
+    """Make the modification time strictly newer than before the write.
+
+    Some filesystems store timestamps with one second resolution. Without a
+    nudge a quick edit can keep the same timestamp, and editors that poll it
+    never reload the file.
+    """
+    try:
+        info = os.stat(target)
+        atime_ns = info.st_atime_ns
+    except OSError:
+        return current_ns
+    desired_ns = max(time.time_ns(), previous_ns + 1_000_000_000)
+    try:
+        os.utime(target, ns=(atime_ns, desired_ns))
+        return desired_ns
+    except OSError:
+        return current_ns
 
 
 def _fsync(descriptor: int) -> None:

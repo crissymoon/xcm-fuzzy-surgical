@@ -46,6 +46,7 @@ QUIT_KEYS = (curses.KEY_F10, CTRL_X, CTRL_Q)
 REFRESH_KEY = getattr(curses, "KEY_F5", -1)
 REFRESH_TIMEOUT_MS = 250
 REFRESH_INTERVAL_SECONDS = 1.5
+CONTENT_CHECK_INTERVAL_SECONDS = 3.0
 
 
 class TUIController:
@@ -79,6 +80,9 @@ class TUIController:
         self.jump_active = False
         self.help_visible = False
         self.last_refresh = 0.0
+        self.last_content_check = 0.0
+        self.status_notice = ""
+        self.status_notice_until = 0.0
 
     def run(self, start_dir: Optional[Path] = None) -> None:
         """Start curses, choosing a directory first when none was supplied."""
@@ -153,14 +157,34 @@ class TUIController:
         if now - self.last_refresh < REFRESH_INTERVAL_SECONDS:
             return
         self.last_refresh = now
+        target = self._selected_target()
         try:
             changed = self.indexer.reindex_changed()
         except Exception:
             return
+        if target is not None and now - self.last_content_check >= CONTENT_CHECK_INTERVAL_SECONDS:
+            self.last_content_check = now
+            try:
+                path = target[0]
+                before = self.indexer.file_lines.get(path)
+                self.indexer.reindex_file(path)
+                after = self.indexer.file_lines.get(path)
+                if before != after and path not in changed:
+                    changed.append(path)
+            except Exception:
+                pass
         if not changed:
             return
         self.file_lines = self.indexer.file_lines
-        self._update_results(preserve=self._selected_target())
+        self._update_results(preserve=target)
+        if target is not None and target[0] in changed:
+            name = relative_path(target[0], self.root_dir)
+            self._set_notice(f"Reloaded {name} from disk", 3.0)
+
+    def _set_notice(self, text: str, seconds: float = 6.0) -> None:
+        """Show a short lived message in the status bar."""
+        self.status_notice = text
+        self.status_notice_until = time.monotonic() + seconds
 
     def _read_search_key(self):
         """Read a key, timing out so external file changes can be noticed."""
@@ -209,7 +233,10 @@ class TUIController:
             self._draw_ui()
             key = self._read_search_key()
             if key is None:
-                self._refresh_changed_files()
+                try:
+                    self._refresh_changed_files()
+                except Exception:
+                    pass
                 continue
 
             if self.help_visible:
@@ -504,7 +531,9 @@ class TUIController:
             right = f" {position}/{len(self.results)} "
         else:
             right = " 0/0 "
-        if self.jump_active and self.jump_notice and self.results:
+        if self.status_notice and time.monotonic() < self.status_notice_until:
+            left = " " + shorten(self.status_notice, max(10, width - len(right) - 2)) + " "
+        elif self.jump_active and self.jump_notice and self.results:
             left = " " + shorten(self.jump_notice, max(10, width - len(right) - 2)) + " "
         padding = max(0, width - len(left) - len(right))
         bar = (left + " " * padding + right)[: width - 1]
@@ -596,5 +625,13 @@ class TUIController:
         if modified:
             self.indexer.reindex_file(file_path)
             self.file_lines = self.indexer.file_lines
+            saved = self.editor.last_save
+            if saved is not None:
+                line = self.editor.last_save_line or line_num
+                name = relative_path(saved.path, self.root_dir)
+                message = f"Saved {name} line {line} ({saved.bytes_written} bytes)"
+                if saved.inode_replaced:
+                    message += " - reopen other apps"
+                self._set_notice(message, 8.0)
         self.last_refresh = time.monotonic()
         self._update_results(preserve=(file_path, line_num))

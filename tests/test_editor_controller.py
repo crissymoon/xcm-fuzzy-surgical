@@ -75,3 +75,27 @@ def test_save_leaves_no_backup_file():
             os.unlink(temp_path)
         if os.path.exists(backup_path):
             os.unlink(backup_path)
+
+
+def test_apply_changes_records_the_saved_file_and_line():
+    editor = EditorController()
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as handle:
+        handle.write("Line 1\nLine 2\nLine 3\n")
+        temp_path = handle.name
+
+    try:
+        editor.file_path = temp_path
+        editor.line_num = 2
+        editor.context_lines = [(1, "Line 1"), (2, "Line 2"), (3, "Line 3")]
+        editor.edited_line = "Line 2 changed"
+        editor.line_edits = {2: "Line 2 changed"}
+
+        assert editor._apply_changes() is True
+        assert editor.last_save is not None
+        assert editor.last_save.path == os.path.realpath(temp_path)
+        assert editor.last_save.bytes_written == len("Line 1\nLine 2 changed\nLine 3\n")
+        assert editor.last_save_line == 2
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)

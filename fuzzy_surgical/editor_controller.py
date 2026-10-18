@@ -8,7 +8,7 @@ import curses
 import curses.ascii
 
 from fuzzy_surgical.colors import Theme
-from fuzzy_surgical.file_writer import FileWriteError, write_text
+from fuzzy_surgical.file_writer import FileWriteError, WriteResult, write_text
 from fuzzy_surgical.renderer import (
     draw_box,
     draw_code_line,
@@ -21,7 +21,7 @@ from fuzzy_surgical.utils import is_backspace, is_enter, printable_char, read_ke
 
 
 class EditorController:
-    """Edits nearby lines and writes changes atomically."""
+    """Edits nearby lines and writes changes back to the same file."""
 
     def __init__(self, theme: Optional[Theme] = None) -> None:
         self.theme = theme
@@ -36,6 +36,8 @@ class EditorController:
         self.cursor_pos = 0
         self.mode = "edit"
         self.save_error = ""
+        self.last_save: Optional[WriteResult] = None
+        self.last_save_line = 0
 
     def edit_line(
         self,
@@ -101,6 +103,8 @@ class EditorController:
             self.cursor_pos = max(0, min(len(original_line), match_column))
         self.mode = "edit"
         self.save_error = ""
+        self.last_save = None
+        self.last_save_line = 0
 
         while True:
             self._draw_editor()
@@ -161,10 +165,9 @@ class EditorController:
                         self.cursor_pos += 1
 
             elif self.mode == "confirm":
-                if key in ("y", "Y"):
+                if key in ("y", "Y") or is_enter(key):
                     if self._apply_changes():
                         return True
-                    self.save_error = "Could not write the file. Check permissions."
                     continue
                 if key in ("n", "N", curses.ascii.ESC):
                     return False
@@ -327,7 +330,7 @@ class EditorController:
             if self.context_lines[self.active_ctx_idx][0] not in self.line_edits:
                 changed_count += 1
         changed_label = f"  [{changed_count} line(s) modified]" if changed_count else ""
-        help_text = f"Enter confirm  Esc cancel  Up/Down switch line  F1 help{changed_label}"
+        help_text = f"Enter review  Esc cancel  Up/Down switch line  F1 help{changed_label}"
         safe_addstr(
             self.stdscr,
             edit_y + 3,
@@ -342,20 +345,28 @@ class EditorController:
             self.stdscr,
             2,
             0,
-            f"Apply {count} change(s)? (y/n)"[: width - 1],
+            f"Apply {count} change(s)? Enter or y writes, n cancels."[: width - 1],
             self.theme.attr("ui.accent", bold=True),
         )
+        safe_addstr(
+            self.stdscr,
+            3,
+            0,
+            f"File: {shorten(self.file_path, max(10, width - 8))}",
+            self.theme.attr("ui.path"),
+        )
+        error_row = 4
         if self.save_error:
             safe_addstr(
                 self.stdscr,
-                3,
+                error_row,
                 0,
                 self.save_error[: width - 1],
                 self.theme.attr("ui.error", bold=True),
             )
 
         originals = {number: text for number, text in self.context_lines}
-        row = 4
+        row = error_row + 1
         for number in sorted(self.line_edits):
             if row >= height - 1:
                 break
@@ -394,12 +405,13 @@ class EditorController:
             "Home / End     jump to start or end",
             "Delete         remove the character under the cursor",
             "Backspace      delete the previous character",
-            "Enter          confirm edits",
+            "Enter          review the changes",
             "Esc            cancel all edits",
             "F1             close this help",
             "",
             "Modified lines are marked + and shown in green.",
             "Original text is shown in red before writing.",
+            "After review, Enter or y writes the file.",
             "",
             "Press any key to return.",
         ]
@@ -467,10 +479,12 @@ class EditorController:
             lines[number - 1] = new_text + ending
 
         try:
-            write_text(self.file_path, "".join(lines))
+            result = write_text(self.file_path, "".join(lines))
         except FileWriteError as exc:
-            self.save_error = str(exc)
+            self.save_error = f"{exc} [{shorten(self.file_path, 40)}]"
             return False
+        self.last_save = result
+        self.last_save_line = min(edits) if edits else self.line_num
         return True
 
 
