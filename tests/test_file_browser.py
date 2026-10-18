@@ -40,7 +40,7 @@ def test_enter_opens_the_selected_file(tmp_path: Path, monkeypatch) -> None:
     source.write_text("print('hello')\n", encoding="utf-8")
     opened = []
 
-    def stub_edit_file(_screen, _theme, _history, _devbox, path, start_line=0):
+    def stub_edit_file(_screen, _theme, _history, _devbox, path, start_line=0, **_kwargs):
         opened.append((str(path), start_line))
         return True
 

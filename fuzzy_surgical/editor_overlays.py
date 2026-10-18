@@ -50,6 +50,7 @@ HELP_LINES = [
     "  Tab            insert four spaces",
     "  Ctrl+Z         undo",
     "  Ctrl+Y         redo",
+    "  F7             absolute or hybrid line numbers",
     "",
     "Dev box (language server and linters)",
     "  Ctrl+N         request completions now (F12 and Ctrl+Space too)",

@@ -29,6 +29,8 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file
 - Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path
 - Search results open in one full editor at the matched line, with surrounding context, a cursor and a save that proves the disk copy
+- Hybrid line numbers show the current line absolute and every other line relative to it; F7 toggles the style, --line-numbers picks the starting style, and the choice follows the session into the next file
+- The search view keeps a short first-run brief above the status bar while the query is empty, saying in plain words how to search and how to open a file in the editor
 - Enter, Ctrl+S and F2 save the editor buffer, and Esc asks before discarding unsaved changes
 - The editor title and the result header show the absolute path, so duplicate file names in different folders are obvious
 - Go-to-line queries say when several files share the typed name instead of silently choosing one
@@ -136,6 +138,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | --devbox | PATH | Dev box JSON file or project directory. Defaults to .fuzzy-surgical/devbox.json in the search root. |
 | --no-lsp | none | Disable language server completion and diagnostics. |
 | --no-linters | none | Disable background linter runs. |
+| --line-numbers | absolute \| hybrid | Start the editor with absolute numbers, or hybrid numbers with the current line absolute and the rest relative. F7 toggles it while editing. Default absolute. |
 | --lsp-doctor | none | Print every language server and linter with its detection state, then exit. Nothing is installed. |
 | --version | none | Print the installed version and exit. |
 | --max-files | INT | Maximum number of files to index. Default 8000. |
@@ -211,6 +214,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Backspace / Delete | Delete backwards or forwards, joining lines at the edges. |
 | Tab | Insert four spaces. |
 | Ctrl+Z / Ctrl+Y | Undo and redo. |
+| F7 | Toggle absolute or hybrid line numbers. Hybrid keeps the current line absolute and counts the other lines from it. The setting carries into the next file opened in the same session. |
 | Ctrl+N | Request completions from the language server. F12 and Ctrl+Space also work. Typing two identifier characters suggests automatically. The popup shows the selected item's type and documentation, and the status bar shows server progress. |
 | Up / Down (completions) | Choose a suggestion. Enter or Tab inserts it, Esc closes the list. |
 | F9 | Show merged language server and linter issues. Ctrl+L also works. Up / Down select, Enter jumps, F9 closes. |

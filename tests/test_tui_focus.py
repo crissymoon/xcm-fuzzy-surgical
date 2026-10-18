@@ -48,6 +48,35 @@ def _controller(directory: Path) -> TUIController:
     return controller
 
 
+def test_empty_search_shows_the_first_run_brief():
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        (directory / "app.py").write_text("alpha\nbeta\n")
+
+        controller = _controller(directory)
+        controller._draw_ui()
+
+        text = controller.stdscr.text()
+        assert "Type any words to search every line." in text
+        assert "Enter opens the highlighted line in the editor." in text
+        assert controller._visible_rows() == controller.stdscr.height - 6
+
+
+def test_brief_leaves_once_a_search_starts():
+    with tempfile.TemporaryDirectory() as tmp:
+        directory = Path(tmp)
+        (directory / "app.py").write_text("alpha\nbeta\n")
+
+        controller = _controller(directory)
+        controller.query = "alpha"
+        controller._update_results()
+        controller._draw_ui()
+
+        assert controller._brief_rows() == 0
+        assert controller._visible_rows() == controller.stdscr.height - 4
+        assert "Type any words to search every line." not in controller.stdscr.text()
+
+
 def test_long_line_scrolls_to_the_match_region():
     with tempfile.TemporaryDirectory() as tmp:
         directory = Path(tmp)
@@ -91,7 +120,7 @@ def test_enter_opens_the_one_editor_at_the_matched_line(monkeypatch):
         controller._update_results()
         calls = []
 
-        def stub_edit_file(_screen, _theme, _history, _devbox, path, start_line=0):
+        def stub_edit_file(_screen, _theme, _history, _devbox, path, start_line=0, **_kwargs):
             calls.append((path, start_line))
             return False
 

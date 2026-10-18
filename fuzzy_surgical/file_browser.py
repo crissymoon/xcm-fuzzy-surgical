@@ -16,6 +16,7 @@ import curses.ascii
 from fuzzy_surgical.browser_navigator import BrowserEntry, FileBrowserNavigator
 from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.devbox import DevBoxSession
+from fuzzy_surgical.editor_preferences import EditorPreferences
 from fuzzy_surgical.full_editor import EditorOpenError, edit_file
 from fuzzy_surgical.history import SnapshotStore
 from fuzzy_surgical.mouse import (
@@ -59,11 +60,13 @@ class FileBrowser:
         ignore_names: Optional[Sequence[str]] = None,
         extensions: Optional[Sequence[str]] = None,
         devbox: Optional[DevBoxSession] = None,
+        preferences: Optional[EditorPreferences] = None,
     ) -> None:
         self.stdscr = stdscr
         self.theme = theme
         self.history = history
         self.devbox = devbox
+        self.preferences = preferences or EditorPreferences()
         self.nav = FileBrowserNavigator(start_dir, ignore_names, extensions)
         self.query = ""
         self.selected = 0
@@ -179,6 +182,7 @@ class FileBrowser:
                 self.history,
                 self.devbox,
                 entry.path,
+                preferences=self.preferences,
             )
         except EditorOpenError as exc:
             self.error = str(exc)

@@ -89,6 +89,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable background linter runs",
     )
     parser.add_argument(
+        "--line-numbers",
+        choices=("absolute", "hybrid"),
+        default="absolute",
+        help=(
+            "Line number style in the editor: absolute, or hybrid with the "
+            "current line absolute and the rest relative. F7 toggles it while "
+            "editing (default: absolute)"
+        ),
+    )
+    parser.add_argument(
         "--lsp-doctor",
         action="store_true",
         help=(
@@ -199,6 +209,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         devbox_config=args.devbox,
         enable_lsp=not args.no_lsp,
         enable_linters=not args.no_linters,
+        line_numbers=args.line_numbers,
     )
 
     start_dir = safe_start_directory(Path.cwd()) if root is None else root

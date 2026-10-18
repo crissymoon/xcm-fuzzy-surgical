@@ -27,7 +27,7 @@ from fuzzy_surgical.utils import display_path
 # them to the application.
 EDITOR_KEY_HINT = (
     "Ctrl+S save  Ctrl+X cut  Ctrl+C copy  Ctrl+V paste  "
-    "^N complete  F10 actions  F1 help"
+    "^N complete  F7 numbers  F10 actions  F1 help"
 )
 
 
@@ -124,7 +124,7 @@ class EditorViewMixin:
         for row_index in range(self.scroll_row, end):
             screen_row = top + (row_index - self.scroll_row)
             active = row_index == self.buffer.cursor_row
-            number = f"{row_index + 1:>{number_width}} "
+            number = self._line_number_text(row_index, number_width)
             attr = self.theme.attr("edit.active", bold=True) if active else self.theme.attr(
                 "ui.lineno", dim=True
             )

@@ -13,6 +13,7 @@ from fuzzy_surgical import __version__
 from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.devbox import DevBoxSession, load_devbox_config
 from fuzzy_surgical.directory_picker import DirectoryPicker
+from fuzzy_surgical.editor_preferences import EditorPreferences
 from fuzzy_surgical.file_browser import FileBrowser
 from fuzzy_surgical.file_writer import file_digest
 from fuzzy_surgical.full_editor import EditorOpenError, edit_file
@@ -65,6 +66,13 @@ REFRESH_TIMEOUT_MS = 250
 REFRESH_INTERVAL_SECONDS = 1.5
 CONTENT_CHECK_INTERVAL_SECONDS = 3.0
 
+# Shown above the status bar while the search is empty, so a first launch
+# explains the two things a new user needs: searching and opening a file.
+SEARCH_BRIEF = (
+    "Type any words to search every line. Results update as you type.",
+    "Enter opens the highlighted line in the editor. F3 browses folders. Ctrl+S saves.",
+)
+
 
 class TUIController:
     """Coordinates the result view, editor and directory picker."""
@@ -79,6 +87,7 @@ class TUIController:
         devbox_config: Optional[str] = None,
         enable_lsp: bool = True,
         enable_linters: bool = True,
+        line_numbers: str = "absolute",
     ) -> None:
         self.indexer = indexer
         self.root_dir = root_dir
@@ -88,6 +97,7 @@ class TUIController:
         self.devbox_config = devbox_config
         self.enable_lsp = enable_lsp
         self.enable_linters = enable_linters
+        self.preferences = EditorPreferences(line_numbers)
         self.devbox: Optional[DevBoxSession] = None
 
         self.matcher = FuzzyMatcher()
@@ -485,12 +495,28 @@ class TUIController:
         if self.click_tracker.classify(event) == "double":
             self._open_editor()
 
+    def _brief_rows(self) -> int:
+        """Return how many rows the first-run brief needs right now."""
+        if self.query or self.help_visible:
+            return 0
+        return len(SEARCH_BRIEF)
+
     def _visible_rows(self) -> int:
         stdscr = getattr(self, "stdscr", None)
         if stdscr is None:
             return 10
         height, _ = window_size(stdscr)
-        return max(1, height - 4)
+        return max(1, height - 4 - self._brief_rows())
+
+    def _draw_brief(self, height: int, width: int, rows: int) -> None:
+        """Draw the short search and file-access reminder above the status bar."""
+        top = max(0, height - 1 - rows)
+        attr = self.theme.attr("ui.dim", dim=True)
+        for offset, line in enumerate(SEARCH_BRIEF[:rows]):
+            row = top + offset
+            if row < 0 or row >= height - 1:
+                continue
+            safe_addstr(self.stdscr, row, 0, line[: width - 1], attr)
 
     def _ensure_visible(self) -> None:
         visible = self._visible_rows()
@@ -559,10 +585,13 @@ class TUIController:
             )
 
         top = 3
-        bottom = height - 2
+        brief_rows = self._brief_rows()
+        bottom = height - 2 - brief_rows
         visible = max(1, bottom - top + 1)
         self._ensure_visible()
         self._draw_results(top, visible, width)
+        if brief_rows:
+            self._draw_brief(height, width, brief_rows)
         self._draw_status(height, width)
 
         if self.help_visible:
@@ -741,6 +770,7 @@ class TUIController:
                 self.devbox,
                 file_path,
                 start_line=line_num,
+                preferences=self.preferences,
             )
         except EditorOpenError as exc:
             self._update_results(preserve=preserve)
@@ -772,6 +802,7 @@ class TUIController:
                 ignore_names=self.ignore_dirs,
                 extensions=self.extensions,
                 devbox=self.devbox,
+                preferences=self.preferences,
             ).run()
         except Exception as exc:  # the browser must never take down the search
             self._set_notice(f"File browser failed: {exc}", 8.0)

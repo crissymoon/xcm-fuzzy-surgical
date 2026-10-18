@@ -28,6 +28,7 @@ from fuzzy_surgical.devbox import DevBoxSession
 from fuzzy_surgical.diagnostics_ui import DiagnosticPanel
 from fuzzy_surgical.editor_mouse import EditorMouseMixin
 from fuzzy_surgical.editor_chords import run_chord
+from fuzzy_surgical.editor_preferences import EditorPreferences
 from fuzzy_surgical.editor_view import EditorViewMixin
 from fuzzy_surgical.file_writer import FileWriteError, WriteResult, file_digest, write_text
 from fuzzy_surgical.history import SnapshotStore
@@ -116,16 +117,18 @@ def edit_file(
     devbox: Optional[DevBoxSession],
     file_path,
     start_line: int = 0,
+    preferences: Optional[EditorPreferences] = None,
 ) -> bool:
     """Open the one editor surface for a file, optionally at a line.
 
     The search view and the file browser both go through this function so
     every way into an editor gets the same selection, copy, paste and save
-    behavior.
+    behavior. ``preferences`` carries choices such as the line number style
+    from one opened file to the next.
     """
-    return FullEditor(stdscr, theme, history, devbox=devbox).edit(
-        Path(file_path), start_line=start_line
-    )
+    return FullEditor(
+        stdscr, theme, history, devbox=devbox, preferences=preferences
+    ).edit(Path(file_path), start_line=start_line)
 
 
 def _devbox_advice(devbox, path: str) -> str:
@@ -148,11 +151,13 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
         theme: Optional[Theme] = None,
         history: Optional[SnapshotStore] = None,
         devbox: Optional[DevBoxSession] = None,
+        preferences: Optional[EditorPreferences] = None,
     ) -> None:
         self.stdscr = stdscr
         self.theme = theme if theme is not None else Theme()
         self.history = history
         self.devbox = devbox
+        self.preferences = preferences or EditorPreferences()
         self.path = ""
         self.buffer = TextBuffer()
         self.disk_digest = ""
@@ -486,6 +491,8 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
                 return True
         elif key in (CTRL_S, CTRL_W) or key == curses.KEY_F2:
             self._save()
+        elif key == curses.KEY_F7:
+            self._toggle_line_numbers()
         elif key == curses.KEY_F6:
             self._open_history()
         elif key == curses.KEY_F8:
@@ -828,6 +835,23 @@ class FullEditor(EditorMouseMixin, EditorViewMixin):
     def _gutter_width(self) -> int:
         number_width = max(3, len(str(self.buffer.line_count)))
         return number_width + 2
+
+    def _line_number_text(self, row_index: int, number_width: int) -> str:
+        """Return one gutter cell, absolute or hybrid relative to the caret."""
+        if self.preferences.hybrid_line_numbers:
+            if row_index == self.buffer.cursor_row:
+                number = row_index + 1
+            else:
+                number = abs(row_index - self.buffer.cursor_row)
+        else:
+            number = row_index + 1
+        return f"{number:>{number_width}} "
+
+    def _toggle_line_numbers(self) -> None:
+        """Switch between absolute and hybrid numbers for this and later files."""
+        self.preferences.toggle_line_numbers()
+        self.notice = self.preferences.describe_line_numbers()
+        self.error = ""
 
     def _select_history(self, index: int) -> None:
         if not self.history_entries:
