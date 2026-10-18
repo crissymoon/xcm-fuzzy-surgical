@@ -13,6 +13,8 @@ from fuzzy_surgical.directory_picker import DirectoryPicker
 from fuzzy_surgical.editor_controller import EditorController
 from fuzzy_surgical.fuzzy_matcher import FuzzyMatcher
 from fuzzy_surgical.indexer import FileIndexer
+from fuzzy_surgical.line_jump import LineJumpResolver
+from fuzzy_surgical.query_parser import LineReference, parse_line_reference
 from fuzzy_surgical.renderer import (
     draw_code_line,
     draw_box,
@@ -58,6 +60,7 @@ class TUIController:
         self.extensions = list(extensions) if extensions is not None else None
 
         self.matcher = FuzzyMatcher()
+        self.jump_resolver = LineJumpResolver()
         self.editor = EditorController()
         self.theme = Theme()
 
@@ -68,6 +71,8 @@ class TUIController:
         self.scroll_offset = 0
         self.x_offset = 0
         self.load_error = ""
+        self.jump_notice = ""
+        self.jump_active = False
         self.help_visible = False
 
     def run(self, start_dir: Optional[Path] = None) -> None:
@@ -217,6 +222,12 @@ class TUIController:
 
     def _update_results(self, preserve: Optional[Tuple[str, int]] = None) -> None:
         """Re-run the query and keep the previous line selected when possible."""
+        self.jump_notice = ""
+        self.jump_active = False
+        reference = parse_line_reference(self.query)
+        if reference is not None and self._apply_jump(reference, preserve):
+            return
+
         try:
             self.results = self.matcher.search_lines(self.file_lines, self.query)
         except Exception:
@@ -233,6 +244,43 @@ class TUIController:
                 visible = self._visible_rows()
                 self.scroll_offset = max(0, self.selected_idx - visible + 1)
                 return
+
+    def _apply_jump(
+        self,
+        reference: LineReference,
+        preserve: Optional[Tuple[str, int]],
+    ) -> bool:
+        """Show the referenced file and select its requested line."""
+        try:
+            jump = self.jump_resolver.resolve(
+                reference,
+                self.file_lines,
+                self.root_dir,
+                prefer_file=preserve[0] if preserve else None,
+                prefer_line=preserve[1] if preserve else None,
+            )
+        except Exception:
+            jump = None
+
+        if jump is None:
+            self.jump_notice = f"No indexed file matches '{reference.path}'."
+            return False
+
+        self.results = jump.results
+        self.jump_active = True
+        self.selected_idx = self._selected_index_for(jump.selected_line)
+        visible = self._visible_rows()
+        self.scroll_offset = max(0, self.selected_idx - visible // 2)
+        self.x_offset = 0
+        if jump.notice:
+            self.jump_notice = jump.notice
+        return True
+
+    def _selected_index_for(self, line_num: int) -> int:
+        for index, (_, number, _, _) in enumerate(self.results):
+            if number == line_num:
+                return index
+        return 0
 
     def _move_selection(self, delta: int) -> None:
         if not self.results:
@@ -323,6 +371,9 @@ class TUIController:
             if self.load_error:
                 message = f"Could not read that folder: {self.load_error}"
                 attr = self.theme.attr("ui.error")
+            elif self.jump_notice:
+                message = self.jump_notice
+                attr = self.theme.attr("ui.error")
             elif not self.file_lines:
                 message = "No readable text files found. F2 chooses another folder."
                 attr = self.theme.attr("ui.dim", dim=True)
@@ -373,7 +424,7 @@ class TUIController:
             positions = []
             display_text = sanitize(line_text)
             row_offset = self.x_offset
-            if self.query:
+            if self.query and not self.jump_active:
                 _, _, positions = self.matcher.fuzzy_match(self.query, display_text)
                 row_offset += match_offset(positions, code_width)
 
@@ -400,6 +451,8 @@ class TUIController:
             right = f" {position}/{len(self.results)} "
         else:
             right = " 0/0 "
+        if self.jump_active and self.jump_notice and self.results:
+            left = " " + shorten(self.jump_notice, max(10, width - len(right) - 2)) + " "
         padding = max(0, width - len(left) - len(right))
         bar = (left + " " * padding + right)[: width - 1]
         safe_addstr(
@@ -413,6 +466,7 @@ class TUIController:
     def _draw_help(self, height: int, width: int) -> None:
         lines = [
             "Type           fuzzy search every indexed line",
+            "file.py:12     jump to that line in a matching file",
             "Up / Down      move selection",
             "PgUp / PgDn    jump one page",
             "Left / Right   scroll long code lines",

@@ -23,6 +23,7 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Fuzzy line search across every indexed text file, with literal substring matches ranked above scattered subsequences
 - Syntax highlighted results and editor context with a fallback highlighter when Pygments is unavailable
 - Preview rows scroll horizontally to the matched text instead of showing column zero
+- Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file
 - Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path
 - Surgical line editing with surrounding context, an explicit confirmation step and an atomic write
 - Automatic backup of the original file before a write
@@ -111,6 +112,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Key | Action |
 | --- | --- |
 | Type | Fuzzy search every indexed line. Literal hits rank first and previews scroll to the match. |
+| file.py:12 | Jump to line 12 in a matching file. Partial paths, bare file names and Windows paths work. |
 | Up / Down | Move the selection one row. |
 | Page Up / Page Down | Move the selection one page. |
 | Left / Right | Scroll long code lines horizontally. |
