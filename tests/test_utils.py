@@ -61,3 +61,9 @@ def test_read_key_normalises_control_characters():
     assert read_key(WideReader()) == 17
     assert read_key(NarrowReader()) == 27
     assert read_key(PrintableReader()) == "a"
+
+
+def test_enter_accepts_the_keypad_enter_code():
+    import curses
+
+    assert is_enter(curses.KEY_ENTER)

@@ -27,6 +27,7 @@ class JumpTarget:
     selected_line: int
     results: List[LineResult]
     notice: str = ""
+    matches: int = 1
 
 
 class LineJumpResolver:
@@ -46,9 +47,12 @@ class LineJumpResolver:
         prefer_line: Optional[int] = None,
     ) -> Optional[JumpTarget]:
         """Return the target file's lines with the requested line selected."""
-        file_path = self.find_file(reference.path, file_lines, root_dir)
-        if file_path is None:
+        candidates = self.find_matches(reference.path, file_lines, root_dir)
+        if not candidates:
             return None
+        file_path = candidates[0]
+        if prefer_file in candidates:
+            file_path = prefer_file
 
         lines = file_lines.get(file_path) or []
         if not lines:
@@ -59,13 +63,21 @@ class LineJumpResolver:
             selected_line = prefer_line
 
         indexed_last = lines[-1][0]
-        notice = ""
+        messages = []
         if selected_line > indexed_last:
-            notice = (
+            messages.append(
                 f"{Path(file_path).name} has {indexed_last} indexed lines; "
                 f"showing line {indexed_last}."
             )
             selected_line = indexed_last
+
+        if len(candidates) > 1:
+            chosen = relative_path(file_path, root_dir)
+            messages.append(
+                f"{len(candidates)} files match '{reference.path}'; using {chosen}. "
+                "Type a folder name to choose another."
+            )
+        notice = " ".join(messages)
 
         results: List[LineResult] = [
             (file_path, number, text, 0.0) for number, text in lines
@@ -77,12 +89,14 @@ class LineJumpResolver:
             results = results[start : start + limit]
             selected_index -= start
 
+        selected_file = results[selected_index][0] if results else file_path
         return JumpTarget(
-            file_path=file_path,
+            file_path=selected_file,
             requested_line=reference.line,
-            selected_line=results[selected_index][1],
+            selected_line=results[selected_index][1] if results else selected_line,
             results=results,
             notice=notice,
+            matches=len(candidates),
         )
 
     @classmethod
@@ -93,16 +107,26 @@ class LineJumpResolver:
         root_dir: Optional[Path],
     ) -> Optional[str]:
         """Pick the indexed file that best matches a typed path fragment."""
+        matches = cls.find_matches(target, file_lines, root_dir)
+        return matches[0] if matches else None
+
+    @classmethod
+    def find_matches(
+        cls,
+        target: str,
+        file_lines: Dict[str, List[tuple]],
+        root_dir: Optional[Path],
+    ) -> List[str]:
+        """Return every indexed file tied for the best path match."""
         query = target.strip().replace("\\", "/").lower()
         if not query:
-            return None
+            return []
 
         query_name = query.rsplit("/", 1)[-1]
         # Free text such as "time:30" should stay a normal line search unless
         # the path portion clearly names a file (a dot or a separator).
         allow_fuzzy = "/" in query or "." in query_name
-        best_path: Optional[str] = None
-        best_key: Optional[Tuple[float, int, str]] = None
+        matches: List[Tuple[float, int, str, str]] = []
 
         for file_path in file_lines:
             rel = relative_path(file_path, root_dir).replace("\\", "/")
@@ -125,12 +149,14 @@ class LineJumpResolver:
                 score = FUZZY_PATH_SCORE + min(fuzzy_score, 20.0)
 
             # Shorter relative paths are less ambiguous, so they win ties.
-            key = (score, -len(rel), rel_lower)
-            if best_key is None or key > best_key:
-                best_key = key
-                best_path = file_path
+            matches.append((score, -len(rel), rel_lower, file_path))
 
-        return best_path
+        if not matches:
+            return []
+        best = max(score for score, _, _, _ in matches)
+        best_tier = [entry for entry in matches if entry[0] == best]
+        best_tier.sort(key=lambda entry: (-entry[1], entry[2]))
+        return [entry[3] for entry in best_tier]
 
     @staticmethod
     def _index_of(results: List[LineResult], line_num: int) -> int:

@@ -26,8 +26,12 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file
 - Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path
 - Surgical line editing with surrounding context and an explicit review step
+- Ctrl+S writes straight from the edit screen, and Esc asks before discarding unsaved changes
+- The editor title and the result header show the absolute path, so duplicate file names in different folders are obvious
+- Go-to-line queries say when several files share the typed name instead of silently choosing one
 - Writes keep the existing inode, so Sublime, less and tail -f see the change immediately
-- Save notice in the status bar reports the file, line and byte count that reached disk
+- Save notice in the status bar reports the absolute file path, line, byte count and verification
+- A warning appears if another program rewrites the saved file within twenty seconds
 - Symlinked files are written through to their target and external edits are never silently overwritten
 - Files changed by other programs are picked up automatically, and F5 rebuilds the index
 - Bounded, crash safe indexing with permission, binary file and symlink loop guards
@@ -103,6 +107,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | -i, --ignore | PATTERN ... | Directory names or glob patterns to skip while indexing. |
 | -e, --extensions | EXT ... | Only index these file extensions, for example .py or py. |
 | --no-picker | none | Skip the picker and search the current directory. |
+| --version | none | Print the installed version and exit. |
 | --max-files | INT | Maximum number of files to index. Default 8000. |
 | --max-file-size | INT | Maximum bytes read per file. Default 1000000. |
 | --max-lines-per-file | INT | Maximum lines indexed per file. Default 5000. |
@@ -115,7 +120,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Key | Action |
 | --- | --- |
 | Type | Fuzzy search every indexed line. Literal hits rank first and previews scroll to the match. |
-| file.py:12 | Jump to line 12 in a matching file. Partial paths, bare file names and Windows paths work. |
+| file.py:12 | Jump to line 12 in a matching file. Partial paths, bare file names and Windows paths work. If several files share the name, the status bar names the chosen file and asks for a folder. |
 | Up / Down | Move the selection one row. |
 | Page Up / Page Down | Move the selection one page. |
 | Left / Right | Scroll long code lines horizontally. |
@@ -146,7 +151,8 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Home / End | Jump to the start or end of the line. |
 | Backspace / Delete | Edit the line. |
 | Enter | Review the edit, then press Enter or y to write, or n to cancel. |
-| Esc | Discard all edits. |
+| Ctrl+S | Write immediately from the edit screen, skipping the review step. Ctrl+W works as an alias on terminals that capture Ctrl+S for flow control. |
+| Esc | Ask before discarding unsaved changes. |
 | F1 | Show help. |
 
 ## Safety and limits
@@ -160,8 +166,11 @@ The indexer never follows directory symlinks and skips unreadable, binary or ove
 | Lines per file | 5,000 |
 | Lines in total | 500,000 |
 
-- Writes only happen after review, keep the existing inode so open editors and pagers see the change, and preserve CRLF endings and a missing final newline.
-- Every save is read back from disk before it is reported, and the modification time is nudged forward when the filesystem timestamp resolution is coarse.
+- Writes happen only after the review step or an explicit Ctrl+S, keep the existing inode so open editors and pagers see the change, and preserve CRLF endings and a missing final newline.
+- Every save is read back through both the opened path and the real target before it is reported, and the absolute path is shown in the editor and the status bar.
+- The modification time is nudged forward when the filesystem timestamp resolution is coarse, and the containing directory is synced.
+- If another program rewrites a just saved file, the status bar says so within twenty seconds.
+- A go-to-line query that matches several files names the chosen file and asks for a folder to disambiguate.
 - Read-only files are written in place by briefly adding owner write permission, so they also keep their inode.
 - Symlinks are written through to their real target, and a file that changed on disk is reloaded instead of being overwritten.
 - Files modified by other programs are detected while the search view is idle, and F5 rebuilds the whole index.

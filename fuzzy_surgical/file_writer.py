@@ -15,6 +15,7 @@ coarse resolution. That keeps timestamp based reload checks working.
 from __future__ import annotations
 
 import errno
+import hashlib
 import os
 import stat
 import tempfile
@@ -36,6 +37,17 @@ class WriteResult:
     inode_replaced: bool
     mtime_ns: int
     permission_adjusted: bool = False
+    requested_path: str = ""
+    digest: str = ""
+
+
+def file_digest(file_path: str) -> str:
+    """Return the sha256 of a file, or an empty string when it is unreadable."""
+    try:
+        with open(file_path, "rb") as handle:
+            return hashlib.sha256(handle.read()).hexdigest()
+    except OSError:
+        return ""
 
 
 def resolve_target(file_path: str) -> str:
@@ -93,9 +105,17 @@ def write_text(file_path: str, text: str) -> WriteResult:
             "The write could not be verified. Another program may be holding the file."
         )
 
+    requested = os.path.abspath(file_path)
+    if requested != target and not _content_matches(file_path, data):
+        raise FileWriteError(
+            "The opened path and the real file now differ. "
+            "Save again after closing the other program."
+        )
+
     mtime_ns = _stat_mtime(target)
     if mtime_ns <= previous_mtime_ns:
         mtime_ns = _bump_mtime(target, mtime_ns, previous_mtime_ns)
+    _fsync_directory(os.path.dirname(target) or ".")
 
     return WriteResult(
         path=target,
@@ -103,6 +123,8 @@ def write_text(file_path: str, text: str) -> WriteResult:
         inode_replaced=inode_replaced,
         mtime_ns=mtime_ns,
         permission_adjusted=permission_adjusted,
+        requested_path=requested,
+        digest=hashlib.sha256(data).hexdigest(),
     )
 
 

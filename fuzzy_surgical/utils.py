@@ -123,6 +123,11 @@ def printable_char(key) -> Optional[str]:
 
 
 def is_enter(key) -> bool:
+    import curses
+
+    key_enter = getattr(curses, "KEY_ENTER", None)
+    if key_enter is not None and key == key_enter:
+        return True
     return key in ("\n", "\r", 10, 13)
 
 
@@ -130,3 +135,45 @@ def is_backspace(key) -> bool:
     import curses
 
     return key in (curses.KEY_BACKSPACE, 8, 127)
+
+
+def disable_flow_control():
+    """Turn off terminal XON/XOFF so Ctrl+S reaches the application.
+
+    Returns the previous termios attributes for restore_terminal_mode, or
+    None when the platform has no termios support.
+    """
+    if os.name == "nt":
+        return None
+    try:
+        import sys
+        import termios
+    except ImportError:
+        return None
+    try:
+        descriptor = sys.stdin.fileno()
+        original = termios.tcgetattr(descriptor)
+    except (OSError, ValueError, termios.error):
+        return None
+    try:
+        updated = list(original)
+        updated[3] = original[3] & ~termios.IXON
+        termios.tcsetattr(descriptor, termios.TCSADRAIN, updated)
+    except (OSError, termios.error):
+        return None
+    return original
+
+
+def restore_terminal_mode(original) -> None:
+    """Restore attributes captured by disable_flow_control."""
+    if original is None or os.name == "nt":
+        return
+    try:
+        import sys
+        import termios
+    except ImportError:
+        return
+    try:
+        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, original)
+    except (OSError, ValueError, termios.error):
+        pass

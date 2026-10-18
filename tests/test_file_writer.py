@@ -1,5 +1,6 @@
 """Tests for writes that stay visible to editors and pagers."""
 
+import hashlib
 import os
 import stat
 
@@ -101,3 +102,13 @@ def test_read_only_file_keeps_inode_on_posix(tmp_path):
         assert path.read_text(encoding="utf-8") == "new\n"
     finally:
         path.chmod(0o644)
+
+
+def test_write_result_reports_the_requested_path_and_digest(tmp_path):
+    path = tmp_path / "app.py"
+    path.write_text("old\n", encoding="utf-8")
+
+    result = write_text(str(path), "new\n")
+
+    assert result.requested_path == str(path)
+    assert result.digest == hashlib.sha256(b"new\n").hexdigest()

@@ -53,7 +53,8 @@ def test_resolver_selects_the_requested_line():
     assert jump.file_path == str(root / "pkg" / "app.py")
     assert jump.selected_line == 42
     assert jump.results[jump.selected_line - 1][1] == 42
-    assert jump.notice == ""
+    assert jump.matches == 2
+    assert "2 files match" in jump.notice
 
 
 def test_resolver_prefers_shorter_relative_path_on_ties():
@@ -64,6 +65,19 @@ def test_resolver_prefers_shorter_relative_path_on_ties():
 
     assert jump is not None
     assert jump.file_path == str(root / "pkg" / "app.py")
+    assert "using pkg/app.py" in jump.notice
+
+
+def test_resolver_reports_a_unique_file_without_an_ambiguity_notice():
+    root, files = _file_lines()
+    reference = parse_line_reference("pkg/app.py:42")
+
+    jump = LineJumpResolver().resolve(reference, files, root)
+
+    assert jump is not None
+    assert jump.file_path == str(root / "pkg" / "app.py")
+    assert jump.matches == 1
+    assert jump.notice == ""
 
 
 def test_resolver_accepts_path_suffix_and_partial_name():

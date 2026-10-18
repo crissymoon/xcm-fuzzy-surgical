@@ -68,6 +68,19 @@ def shorten(text: str, limit: int) -> str:
     return "..." + text[-(limit - 3) :]
 
 
+def middle_shorten(text: str, limit: int) -> str:
+    """Elide the middle so both the label and the path tail stay visible."""
+    if limit <= 0:
+        return ""
+    if len(text) <= limit:
+        return text
+    if limit <= 5:
+        return text[:limit]
+    head = max(1, limit // 3)
+    tail = limit - head - 3
+    return text[:head] + "..." + text[-tail:]
+
+
 def match_offset(positions: Optional[Iterable[int]], width: int, margin: int = 6) -> int:
     """Return a horizontal offset that brings the first match into view.
 

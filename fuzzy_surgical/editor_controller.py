@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import curses
@@ -17,7 +18,16 @@ from fuzzy_surgical.renderer import (
     shorten,
     window_size,
 )
-from fuzzy_surgical.utils import is_backspace, is_enter, printable_char, read_key
+from fuzzy_surgical.utils import (
+    display_path,
+    is_backspace,
+    is_enter,
+    printable_char,
+    read_key,
+)
+
+CTRL_S = 19
+CTRL_W = 23
 
 
 class EditorController:
@@ -114,19 +124,27 @@ class EditorController:
 
             if self.mode == "edit":
                 if key == curses.ascii.ESC:
-                    return False
-                if is_enter(key):
+                    if self._has_pending_changes():
+                        self.mode = "discard"
+                    else:
+                        return False
+                elif key in (CTRL_S, CTRL_W):
+                    if self._save_now():
+                        return True
+                elif is_enter(key):
                     self._save_active_edit()
                     if self.line_edits:
                         self.mode = "confirm"
                     else:
                         return False
                 elif key == curses.KEY_UP:
+                    self.save_error = ""
                     self._save_active_edit()
                     if self.active_ctx_idx > 0:
                         self.active_ctx_idx -= 1
                         self._load_active_edit()
                 elif key == curses.KEY_DOWN:
+                    self.save_error = ""
                     self._save_active_edit()
                     if self.active_ctx_idx < len(self.context_lines) - 1:
                         self.active_ctx_idx += 1
@@ -172,8 +190,34 @@ class EditorController:
                 if key in ("n", "N", curses.ascii.ESC):
                     return False
 
+            elif self.mode == "discard":
+                if key in ("y", "Y"):
+                    return False
+                if key in ("n", "N", curses.ascii.ESC):
+                    self.mode = "edit"
+
             elif self.mode == "help":
                 self.mode = "edit"
+
+    def _has_pending_changes(self) -> bool:
+        return self._pending_count() > 0
+
+    def _pending_count(self) -> int:
+        count = len(self.line_edits)
+        if not self.context_lines:
+            return count
+        number, original = self.context_lines[self.active_ctx_idx]
+        if self.edited_line != original and number not in self.line_edits:
+            count += 1
+        return count
+
+    def _save_now(self) -> bool:
+        """Save from the edit screen without walking through the review step."""
+        self._save_active_edit()
+        if not self.line_edits:
+            self.save_error = "No changes to save. Type an edit first."
+            return False
+        return self._apply_changes()
 
     def _save_active_edit(self) -> None:
         number, original = self.context_lines[self.active_ctx_idx]
@@ -205,9 +249,12 @@ class EditorController:
             return
 
         active_number = (
-            self.context_lines[self.active_ctx_idx][0] if self.mode == "edit" else self.line_num
+            self.context_lines[self.active_ctx_idx][0]
+            if self.mode in ("edit", "discard")
+            else self.line_num
         )
-        title = f"Editing {shorten(self.file_path, max(10, width - 20))}:{active_number}"
+        label = display_path(Path(self.file_path))
+        title = f"Editing {shorten(label, max(10, width - 20))}:{active_number}"
         safe_addstr(
             self.stdscr,
             0,
@@ -220,6 +267,8 @@ class EditorController:
             self._draw_edit_mode(height, width)
         elif self.mode == "confirm":
             self._draw_confirm_mode(height, width)
+        elif self.mode == "discard":
+            self._draw_discard_mode(height, width)
         else:
             self._draw_help_mode(height, width)
 
@@ -325,17 +374,49 @@ class EditorController:
         if view_start + available < len(display_text):
             safe_addstr(self.stdscr, edit_row, max(0, width - 2), ">", curses.A_DIM)
 
-        changed_count = len(self.line_edits)
-        if self.edited_line != self.context_lines[self.active_ctx_idx][1]:
-            if self.context_lines[self.active_ctx_idx][0] not in self.line_edits:
-                changed_count += 1
+        changed_count = self._pending_count()
         changed_label = f"  [{changed_count} line(s) modified]" if changed_count else ""
-        help_text = f"Enter review  Esc cancel  Up/Down switch line  F1 help{changed_label}"
+        if self.save_error:
+            safe_addstr(
+                self.stdscr,
+                edit_y + 2,
+                0,
+                self.save_error[: width - 1],
+                self.theme.attr("ui.error", bold=True),
+            )
+        help_text = (
+            f"Enter review  Ctrl+S save now  Esc discard  Up/Down line  F1 help{changed_label}"
+        )
         safe_addstr(
             self.stdscr,
             edit_y + 3,
             0,
             help_text[: width - 1],
+            self.theme.attr("ui.dim", dim=True),
+        )
+
+    def _draw_discard_mode(self, height: int, width: int) -> None:
+        pending = self._pending_count()
+        safe_addstr(
+            self.stdscr,
+            2,
+            0,
+            f"Discard {pending} unsaved change(s)? y discards, n keeps editing."
+            [: width - 1],
+            self.theme.attr("ui.error", bold=True),
+        )
+        safe_addstr(
+            self.stdscr,
+            3,
+            0,
+            f"File: {shorten(display_path(Path(self.file_path)), max(10, width - 8))}",
+            self.theme.attr("ui.path"),
+        )
+        safe_addstr(
+            self.stdscr,
+            5,
+            0,
+            "Nothing has been written to disk yet."[: width - 1],
             self.theme.attr("ui.dim", dim=True),
         )
 
@@ -352,7 +433,7 @@ class EditorController:
             self.stdscr,
             3,
             0,
-            f"File: {shorten(self.file_path, max(10, width - 8))}",
+            f"File: {shorten(display_path(Path(self.file_path)), max(10, width - 8))}",
             self.theme.attr("ui.path"),
         )
         error_row = 4
@@ -406,12 +487,15 @@ class EditorController:
             "Delete         remove the character under the cursor",
             "Backspace      delete the previous character",
             "Enter          review the changes",
-            "Esc            cancel all edits",
+            "Ctrl+S         save without the review step",
+            "Ctrl+W         also saves, for terminals with flow control",
+            "Esc            discard, with a confirmation prompt",
             "F1             close this help",
             "",
             "Modified lines are marked + and shown in green.",
             "Original text is shown in red before writing.",
             "After review, Enter or y writes the file.",
+            "The title shows the absolute path that will be written.",
             "",
             "Press any key to return.",
         ]

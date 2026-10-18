@@ -81,3 +81,46 @@ def test_editor_refuses_to_overwrite_external_edit(tmp_path):
     assert editor._apply_changes() is False
     assert "changed on disk" in editor.save_error
     assert path.read_text(encoding="utf-8") == "one\nchanged elsewhere\n"
+
+
+def test_saved_file_watch_warns_when_another_program_rewrites_it(tmp_path):
+    import time
+
+    from fuzzy_surgical.file_writer import file_digest
+    from fuzzy_surgical.tui_controller import TUIController
+
+    path = tmp_path / "app.py"
+    path.write_text("old\n", encoding="utf-8")
+    indexer = FileIndexer()
+    indexer.index_directory(tmp_path)
+    controller = TUIController(indexer, root_dir=tmp_path)
+    controller.saved_path = str(path)
+    controller.saved_digest = file_digest(str(path))
+    controller.saved_at = time.monotonic()
+
+    path.write_text("rewritten elsewhere\n", encoding="utf-8")
+    controller._check_saved_file([str(path)])
+
+    assert "Another program changed" in controller.status_notice
+    assert controller.saved_path == ""
+
+
+def test_saved_file_watch_ignores_matching_content(tmp_path):
+    import time
+
+    from fuzzy_surgical.file_writer import file_digest
+    from fuzzy_surgical.tui_controller import TUIController
+
+    path = tmp_path / "app.py"
+    path.write_text("old\n", encoding="utf-8")
+    indexer = FileIndexer()
+    indexer.index_directory(tmp_path)
+    controller = TUIController(indexer, root_dir=tmp_path)
+    controller.saved_path = str(path)
+    controller.saved_digest = file_digest(str(path))
+    controller.saved_at = time.monotonic()
+
+    controller._check_saved_file([str(path)])
+
+    assert controller.status_notice == ""
+    assert controller.saved_path == str(path)

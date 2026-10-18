@@ -22,3 +22,15 @@ def test_match_offset_brings_late_matches_into_view():
     assert match_offset([36], 40, margin=6) == 30
     assert match_offset([60], 40, margin=6) == 54
     assert match_offset([5], 0) == 0
+
+
+def test_middle_shorten_keeps_the_label_and_the_tail():
+    from fuzzy_surgical.renderer import middle_shorten
+
+    text = "Saved /very/long/path/that/keeps/going/TaxCalc.java:63 (120 bytes, verified)"
+    shortened = middle_shorten(text, 50)
+
+    assert shortened.startswith("Saved /very")
+    assert shortened.endswith("(120 bytes, verified)")
+    assert "..." in shortened
+    assert len(shortened) <= 50

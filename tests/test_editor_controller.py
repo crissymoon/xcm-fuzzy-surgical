@@ -99,3 +99,54 @@ def test_apply_changes_records_the_saved_file_and_line():
     finally:
         if os.path.exists(temp_path):
             os.unlink(temp_path)
+
+
+def test_save_now_writes_without_the_review_step(tmp_path):
+    path = tmp_path / "app.py"
+    path.write_text("one\ntwo\nthree\n", encoding="utf-8")
+
+    editor = EditorController()
+    editor.file_path = str(path)
+    editor.line_num = 2
+    editor.context_lines = [(1, "one"), (2, "two"), (3, "three")]
+    editor.active_ctx_idx = 1
+    editor.edited_line = "TWO"
+
+    assert editor._save_now() is True
+    assert path.read_text(encoding="utf-8") == "one\nTWO\nthree\n"
+    assert editor.last_save is not None
+    assert editor.last_save.digest
+    assert editor.last_save.requested_path == str(path)
+    assert editor.last_save_line == 2
+
+
+def test_save_now_explains_when_nothing_was_edited(tmp_path):
+    path = tmp_path / "app.py"
+    path.write_text("one\ntwo\n", encoding="utf-8")
+
+    editor = EditorController()
+    editor.file_path = str(path)
+    editor.line_num = 1
+    editor.context_lines = [(1, "one"), (2, "two")]
+    editor.edited_line = "one"
+
+    assert editor._save_now() is False
+    assert "No changes to save" in editor.save_error
+    assert path.read_text(encoding="utf-8") == "one\ntwo\n"
+
+
+def test_pending_changes_include_the_active_line_and_saved_lines(tmp_path):
+    path = tmp_path / "app.py"
+    path.write_text("one\ntwo\n", encoding="utf-8")
+
+    editor = EditorController()
+    editor.file_path = str(path)
+    editor.line_num = 1
+    editor.context_lines = [(1, "one"), (2, "two")]
+    editor.active_ctx_idx = 0
+    editor.edited_line = "one changed"
+    assert editor._has_pending_changes() is True
+    assert editor._pending_count() == 1
+
+    editor.line_edits = {2: "two changed"}
+    assert editor._pending_count() == 2

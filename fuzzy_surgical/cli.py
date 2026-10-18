@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
+from fuzzy_surgical import __version__
 from fuzzy_surgical.indexer import FileIndexer, IndexLimits
 from fuzzy_surgical.utils import safe_directory, safe_start_directory
 
@@ -18,6 +19,12 @@ def build_parser() -> argparse.ArgumentParser:
             "Fuzzy finder with syntax highlighting and surgical line replacement. "
             "Run without a directory to pick one with fuzzy navigation."
         ),
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+        help="Show the version and exit",
     )
     parser.add_argument(
         "directory",

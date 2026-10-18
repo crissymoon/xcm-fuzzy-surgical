@@ -9,9 +9,11 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import curses
 import curses.ascii
 
+from fuzzy_surgical import __version__
 from fuzzy_surgical.colors import Theme
 from fuzzy_surgical.directory_picker import DirectoryPicker
 from fuzzy_surgical.editor_controller import EditorController
+from fuzzy_surgical.file_writer import file_digest
 from fuzzy_surgical.fuzzy_matcher import FuzzyMatcher
 from fuzzy_surgical.indexer import FileIndexer
 from fuzzy_surgical.line_jump import LineJumpResolver
@@ -21,18 +23,21 @@ from fuzzy_surgical.renderer import (
     draw_box,
     fill_row,
     match_offset,
+    middle_shorten,
     safe_addstr,
     sanitize,
     shorten,
     window_size,
 )
 from fuzzy_surgical.utils import (
+    disable_flow_control,
     display_path,
     is_backspace,
     is_enter,
     printable_char,
     read_key,
     relative_path,
+    restore_terminal_mode,
     safe_start_directory,
 )
 
@@ -83,6 +88,10 @@ class TUIController:
         self.last_content_check = 0.0
         self.status_notice = ""
         self.status_notice_until = 0.0
+        self.saved_path = ""
+        self.saved_digest = ""
+        self.saved_at = 0.0
+        self.termios_state = None
 
     def run(self, start_dir: Optional[Path] = None) -> None:
         """Start curses, choosing a directory first when none was supplied."""
@@ -90,8 +99,11 @@ class TUIController:
             curses.wrapper(self._run, start_dir)
         except KeyboardInterrupt:
             pass
+        finally:
+            restore_terminal_mode(self.termios_state)
 
     def _run(self, stdscr, start_dir: Optional[Path]) -> None:
+        self.termios_state = disable_flow_control()
         self.stdscr = stdscr
         self.theme.init()
         try:
@@ -180,6 +192,24 @@ class TUIController:
         if target is not None and target[0] in changed:
             name = relative_path(target[0], self.root_dir)
             self._set_notice(f"Reloaded {name} from disk", 3.0)
+        self._check_saved_file(changed)
+
+    def _check_saved_file(self, changed: List[str]) -> None:
+        """Warn when another program rewrites a file right after a save."""
+        if not self.saved_path:
+            return
+        if time.monotonic() - self.saved_at > 20.0:
+            self.saved_path = ""
+            self.saved_digest = ""
+            return
+        if self.saved_path not in changed:
+            return
+        digest = file_digest(self.saved_path)
+        if digest and self.saved_digest and digest != self.saved_digest:
+            name = display_path(Path(self.saved_path))
+            self._set_notice(f"Another program changed {name} after the save", 10.0)
+            self.saved_path = ""
+            self.saved_digest = ""
 
     def _set_notice(self, text: str, seconds: float = 6.0) -> None:
         """Show a short lived message in the status bar."""
@@ -407,7 +437,7 @@ class TUIController:
             self.stdscr,
             0,
             0,
-            " fuzzy-surgical ",
+            f" fuzzy-surgical {__version__} ",
             self.theme.attr("ui.accent", bold=True),
         )
         root_label = display_path(self.root_dir or Path.cwd())
@@ -433,6 +463,17 @@ class TUIController:
             "-" * max(0, width - 1),
             self.theme.attr("ui.dim", dim=True),
         )
+        if self.results:
+            index = max(0, min(self.selected_idx, len(self.results) - 1))
+            label = display_path(Path(self.results[index][0]))
+            label = shorten(label, max(0, width - 4))
+            safe_addstr(
+                self.stdscr,
+                2,
+                max(0, width - len(label) - 2),
+                " " + label + " ",
+                self.theme.attr("ui.path", dim=True),
+            )
 
         top = 3
         bottom = height - 2
@@ -532,9 +573,9 @@ class TUIController:
         else:
             right = " 0/0 "
         if self.status_notice and time.monotonic() < self.status_notice_until:
-            left = " " + shorten(self.status_notice, max(10, width - len(right) - 2)) + " "
+            left = " " + middle_shorten(self.status_notice, max(10, width - len(right) - 2)) + " "
         elif self.jump_active and self.jump_notice and self.results:
-            left = " " + shorten(self.jump_notice, max(10, width - len(right) - 2)) + " "
+            left = " " + middle_shorten(self.jump_notice, max(10, width - len(right) - 2)) + " "
         padding = max(0, width - len(left) - len(right))
         bar = (left + " " * padding + right)[: width - 1]
         safe_addstr(
@@ -628,10 +669,13 @@ class TUIController:
             saved = self.editor.last_save
             if saved is not None:
                 line = self.editor.last_save_line or line_num
-                name = relative_path(saved.path, self.root_dir)
-                message = f"Saved {name} line {line} ({saved.bytes_written} bytes)"
+                name = display_path(Path(saved.path))
+                message = f"Saved {name}:{line} ({saved.bytes_written} bytes, verified)"
                 if saved.inode_replaced:
-                    message += " - reopen other apps"
-                self._set_notice(message, 8.0)
+                    message += " - inode replaced"
+                self._set_notice(message, 10.0)
+                self.saved_path = file_path
+                self.saved_digest = saved.digest
+                self.saved_at = time.monotonic()
         self.last_refresh = time.monotonic()
         self._update_results(preserve=(file_path, line_num))
