@@ -286,7 +286,7 @@ class TUIController:
         except curses.error:
             return read_key(self.stdscr)
         try:
-            return read_key(self.stdscr)
+            return read_key(self.stdscr, input_timeout=REFRESH_TIMEOUT_MS)
         finally:
             try:
                 self.stdscr.timeout(-1)

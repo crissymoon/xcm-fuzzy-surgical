@@ -105,6 +105,9 @@ class EditorJumpMixin:
         self.notice = ""
         self.completion.close()
         self.diagnostics_panel.close()
+        find = getattr(self, "find", None)
+        if find is not None:
+            find.close()
 
     def _handle_jump_key(self, key) -> None:
         """Interpret a key while the jump prompt is open."""

@@ -22,6 +22,8 @@ HELP_LINES = [
     "  Up / Down      move one wrapped screen row",
     "  Home / End     start or end of the logical line",
     "  PgUp / PgDn    move one page of screen rows",
+    "  Ctrl+F         find text; Enter next match, Up previous",
+    "  F3             find next after the prompt is closed",
     "  Ctrl+G         jump to a line, or a number of lines up or down",
     "  Mouse click    place the cursor at the clicked cell or wrapped row",
     "  Mouse wheel    scroll with the caret held in the middle of the view",

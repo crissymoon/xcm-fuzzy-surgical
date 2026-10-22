@@ -187,3 +187,27 @@ def test_shifted_csi_arrow_is_decoded_as_a_shift_key() -> None:
     screen = FakeScreen(list("\x1b[1;2D"))
 
     assert read_key(screen, input_timeout=120) == getattr(curses, "KEY_SLEFT", 393)
+
+
+def test_ss3_function_key_is_decoded() -> None:
+    import curses
+
+    screen = FakeScreen(list("\x1bOR"))
+
+    assert read_key(screen, input_timeout=120) == curses.KEY_F3
+
+
+def test_tilde_function_key_is_decoded() -> None:
+    import curses
+
+    screen = FakeScreen(list("\x1b[13~"))
+
+    assert read_key(screen, input_timeout=120) == curses.KEY_F3
+
+
+def test_ss3_f1_is_decoded_for_the_help_key() -> None:
+    import curses
+
+    screen = FakeScreen(list("\x1bOP"))
+
+    assert read_key(screen, input_timeout=120) == curses.KEY_F1

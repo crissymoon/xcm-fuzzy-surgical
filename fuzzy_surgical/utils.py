@@ -70,6 +70,21 @@ def disable_bracketed_paste() -> None:
     _terminal_write(BRACKETED_PASTE_OFF)
 
 
+def enable_bar_caret() -> bool:
+    """Ask the terminal for a blinking bar caret, as editors show.
+
+    DECSCUSR is widely supported (iTerm2, Terminal.app, kitty, WezTerm).
+    Terminals that ignore it keep their own cursor, so this only changes the
+    look and never raises.
+    """
+    return _terminal_write("\x1b[5 q")
+
+
+def restore_caret_shape() -> None:
+    """Return the terminal cursor to its profile default."""
+    _terminal_write("\x1b[0 q")
+
+
 def _push_back(*values: object) -> None:
     for value in values:
         _PENDING.append(value)
@@ -241,6 +256,25 @@ _CSI_TILDE_NAV = {
     "6": "KEY_NPAGE",
     "7": "KEY_HOME",
     "8": "KEY_END",
+    "11": "KEY_F1",
+    "12": "KEY_F2",
+    "13": "KEY_F3",
+    "14": "KEY_F4",
+    "15": "KEY_F5",
+    "17": "KEY_F6",
+    "18": "KEY_F7",
+    "19": "KEY_F8",
+    "20": "KEY_F9",
+    "21": "KEY_F10",
+    "23": "KEY_F11",
+    "24": "KEY_F12",
+}
+# SS3 form of the function keys: Escape O P, Q, R, S for F1 to F4.
+_SS3_FN = {
+    "P": "KEY_F1",
+    "Q": "KEY_F2",
+    "R": "KEY_F3",
+    "S": "KEY_F4",
 }
 
 
@@ -257,6 +291,8 @@ def _csi_key(params: str, final: str):
     if final in _CSI_NAV:
         table = _CSI_SHIFT_NAV if params == "1;2" else _CSI_NAV
         name = table[final]
+    elif final in _SS3_FN and not params:
+        name = _SS3_FN[final]
     elif final == "~":
         name = _CSI_TILDE_NAV.get(params.split(";")[0])
     elif final == "Z":

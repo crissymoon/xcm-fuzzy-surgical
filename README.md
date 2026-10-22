@@ -31,6 +31,8 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path
 - Search results open in one full editor at the matched line, with surrounding context, a cursor and a save that proves the disk copy
 - Hybrid line numbers show the current line absolute and every other line relative to it; F7 toggles the style, --line-numbers picks the starting style, Ctrl+G jumps by a line number or by the number read above or below the caret, and the choice follows the session into the next file
+- Ctrl+F finds text in the open file, highlights every hit and moves the caret onto the match instead of only counting results; Enter or Down steps forward, Up steps back, F3 repeats after the prompt closes, and Cmd+F opens it where the terminal reports the chord
+- The editor asks the terminal for a blinking bar caret and places it only after every other row is drawn, so the cursor stays at the insertion point instead of looking like a block left behind by the status bar
 - The search view keeps a short first-run brief above the status bar while the query is empty, saying in plain words how to search and how to open a file in the editor
 - Enter, Ctrl+S and F2 save the editor buffer, and Esc asks before discarding unsaved changes
 - The editor title and the result header show the absolute path, so duplicate file names in different folders are obvious
@@ -219,6 +221,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Tab | Insert four spaces. |
 | Ctrl+Z / Ctrl+Y | Undo and redo. |
 | F7 | Toggle absolute or hybrid line numbers. Hybrid keeps the current line absolute and counts the other lines from it. The setting carries into the next file opened in the same session. |
+| Ctrl+F / Cmd+F | Find text in the file. Every hit is highlighted and the caret moves onto the first match at or after where the prompt opened, so the view lands on the text. Enter or Down goes to the next match, Up to the previous one, Ctrl+U clears the query, and Esc closes the prompt. F3 repeats the last search after the prompt closes. macOS terminals keep Cmd+F for their own find bar, so Ctrl+F is the key the editor receives. |
 | Ctrl+G | Open the jump prompt. Type a number, then Up or Down moves that many logical lines, which is exactly the number the hybrid gutter shows above or below the caret; Enter instead goes to that absolute line number, and Esc cancels. Cmd+G and Alt+G open the prompt where the terminal reports the chord. |
 | Ctrl+N | Request completions from the language server. F12 and Ctrl+Space also work. Typing two identifier characters suggests automatically. The popup shows the selected item's type and documentation, and the status bar shows server progress. |
 | Up / Down (completions) | Choose a suggestion. Enter or Tab inserts it, Esc closes the list. |

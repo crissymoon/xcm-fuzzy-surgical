@@ -7,6 +7,7 @@ from pathlib import Path
 import curses
 
 from fuzzy_surgical import editor_layout
+from fuzzy_surgical.editor_find import draw_match
 from fuzzy_surgical.editor_overlays import (
     draw_discard as draw_discard_overlay,
     draw_help as draw_help_overlay,
@@ -16,7 +17,6 @@ from fuzzy_surgical.editor_overlays import (
 from fuzzy_surgical.renderer import (
     draw_code_line,
     safe_addstr,
-    sanitize,
     shorten,
     window_size,
 )
@@ -27,7 +27,7 @@ from fuzzy_surgical.utils import display_path
 # Command equivalents (Cmd+X, Cmd+C, Cmd+V) for themselves and never forward
 # them to the application.
 EDITOR_KEY_HINT = (
-    "Ctrl+S save  Ctrl+X cut  Ctrl+C copy  Ctrl+V paste  "
+    "Ctrl+S save  Ctrl+F find  Ctrl+X cut  Ctrl+C copy  Ctrl+V paste  "
     "^N complete  ^G jump  F7 numbers  F10 actions  F1 help"
 )
 
@@ -37,6 +37,7 @@ class EditorViewMixin:
 
     def _draw(self) -> None:
         self.stdscr.erase()
+        self._cursor_target = None
         height, width = window_size(self.stdscr)
         if height == 0 or width == 0:
             return
@@ -69,7 +70,23 @@ class EditorViewMixin:
         self._draw_status(height, width)
         if self.mode == "edit" and self.menu.visible:
             self.menu.draw(self.stdscr, self.theme, height, width)
+        self._place_cursor()
         self.stdscr.refresh()
+
+    def _place_cursor(self) -> None:
+        """Put the terminal caret back after every other row has been drawn.
+
+        Writing the status bar moves the terminal cursor to the end of that
+        line, so the caret has to be placed last or it never sits where the
+        user is typing.
+        """
+        target = getattr(self, "_cursor_target", None)
+        if target is None:
+            return
+        try:
+            self.stdscr.move(*target)
+        except curses.error:
+            pass
 
     def _draw_header(self, height: int, width: int) -> None:
         marker = " *" if self.buffer.dirty else ""
@@ -147,6 +164,21 @@ class EditorViewMixin:
                 available,
                 self.theme,
             )
+            if self.find.matches:
+                current = self.find.current
+                for match in self.find.matches_on(segment.row):
+                    draw_match(
+                        self.stdscr,
+                        screen_row,
+                        gutter_width,
+                        self.buffer.lines[segment.row],
+                        match[1],
+                        match[2],
+                        segment.start_cell,
+                        available,
+                        self.theme,
+                        current=match == current,
+                    )
 
         if (self.scroll_row, self.scroll_part) != (0, 0):
             safe_addstr(self.stdscr, top, max(0, width - 8), " ^ more", curses.A_DIM)
@@ -168,7 +200,6 @@ class EditorViewMixin:
                 curses.A_DIM,
             )
 
-        caret_display = self._caret_cell()
         caret_part, caret_inner = self._caret_part(available)
         caret_index = editor_layout.segment_index(
             segments, self.buffer.cursor_row, caret_part
@@ -178,19 +209,13 @@ class EditorViewMixin:
         caret_row = top + caret_index
         caret_col = min(gutter_width + caret_inner, max(0, width - 2))
         if 0 <= caret_row < height - 2:
-            rendered = sanitize(self.buffer.lines[self.buffer.cursor_row])
-            caret_char = (
-                rendered[caret_display]
-                if 0 <= caret_display < len(rendered)
-                else " "
-            )
-            safe_addstr(self.stdscr, caret_row, caret_col, caret_char, curses.A_REVERSE)
-            try:
-                self.stdscr.move(caret_row, caret_col)
-            except curses.error:
-                pass
+            # The terminal draws the caret itself, as a blinking bar, so no
+            # reverse video block is painted over the character.
+            self._cursor_target = (caret_row, caret_col)
 
-        if self.jump.active:
+        if self.find.active:
+            self._draw_find_prompt(height, width)
+        elif self.jump.active:
             safe_addstr(
                 self.stdscr,
                 height - 2,
@@ -224,6 +249,19 @@ class EditorViewMixin:
                 max_rows=max(1, height - 5),
                 max_width=max(24, width - gutter_width - 2),
             )
+
+    def _draw_find_prompt(self, height: int, width: int) -> None:
+        """Draw the one-row find prompt and keep the caret inside it."""
+        prompt = self.find.hint()
+        safe_addstr(
+            self.stdscr,
+            height - 2,
+            0,
+            prompt[: width - 1],
+            self.theme.attr("ui.accent", bold=True),
+        )
+        column = min(self.find.caret_column(), max(0, width - 2))
+        self._cursor_target = (height - 2, column)
 
     def _draw_status(self, height: int, width: int) -> None:
         state = "modified" if self.buffer.dirty else "saved"

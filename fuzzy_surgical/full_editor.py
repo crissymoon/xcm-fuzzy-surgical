@@ -28,6 +28,7 @@ from fuzzy_surgical.context_menu import ContextMenu
 from fuzzy_surgical.devbox import DevBoxSession
 from fuzzy_surgical.diagnostics_ui import DiagnosticPanel
 from fuzzy_surgical.editor_chords import run_chord
+from fuzzy_surgical.editor_find import CTRL_F, EditorFindMixin, FindPrompt
 from fuzzy_surgical.editor_mouse import EditorMouseMixin
 from fuzzy_surgical.editor_preferences import EditorPreferences
 from fuzzy_surgical.editor_scroll import EditorScrollMixin
@@ -63,10 +64,12 @@ from fuzzy_surgical.utils import (
     disable_bracketed_paste,
     disable_interrupt_keys,
     enable_bracketed_paste,
+    enable_bar_caret,
     is_backspace,
     is_enter,
     printable_char,
     read_key,
+    restore_caret_shape,
     restore_terminal_mode,
 )
 
@@ -146,7 +149,11 @@ def _devbox_advice(devbox, path: str) -> str:
 
 
 class FullEditor(
-    editor_jump.EditorJumpMixin, EditorScrollMixin, EditorMouseMixin, EditorViewMixin
+    editor_jump.EditorJumpMixin,
+    EditorFindMixin,
+    EditorScrollMixin,
+    EditorMouseMixin,
+    EditorViewMixin,
 ):
     """Scrollable editor for one whole file."""
 
@@ -187,6 +194,7 @@ class FullEditor(
         self.completion = CompletionPopup()
         self.menu = ContextMenu()
         self.jump = editor_jump.JumpPrompt()
+        self.find = FindPrompt()
         self.diagnostics_panel = DiagnosticPanel()
         self.diagnostics = []
         self.assist_status = ""
@@ -227,6 +235,7 @@ class FullEditor(
         self.completion = CompletionPopup()
         self.menu.close()
         self.jump.close()
+        self.find.reset()
         self.diagnostics_panel = DiagnosticPanel()
         self.diagnostics = []
         self._completion_due_at = 0.0
@@ -244,6 +253,17 @@ class FullEditor(
             curses.curs_set(1)
         except curses.error:
             pass
+        enable_bar_caret()
+
+        # The editor decodes escape sequences itself, so the one second
+        # ncurses waits to tell Escape from a function key only makes Escape
+        # feel stuck. Shorten it while the editor owns the screen.
+        escdelay = None
+        try:
+            escdelay = curses.get_escdelay()
+            curses.set_escdelay(50)
+        except (AttributeError, curses.error):
+            escdelay = None
 
         self._set_input_timeout(120)
         mode_state = disable_interrupt_keys()
@@ -253,7 +273,10 @@ class FullEditor(
             while True:
                 key = read_key(self.stdscr, input_timeout=120)
                 if isinstance(key, PastedText):
-                    self._insert_paste(key.text)
+                    if self.find.active:
+                        self._find_paste(key.text)
+                    else:
+                        self._insert_paste(key.text)
                     self._draw()
                     continue
                 if key is None or key == -1:
@@ -268,7 +291,7 @@ class FullEditor(
                     continue
                 if key == MOUSE_KEY:
                     event = read_mouse(self.stdscr)
-                    if event is not None:
+                    if event is not None and not self.find.active:
                         self._handle_mouse(event)
                         self._draw()
                     continue
@@ -293,7 +316,13 @@ class FullEditor(
                 self._draw()
         finally:
             disable_bracketed_paste()
+            restore_caret_shape()
             restore_terminal_mode(mode_state)
+            if escdelay is not None:
+                try:
+                    curses.set_escdelay(escdelay)
+                except (AttributeError, curses.error):
+                    pass
             self._set_input_timeout(-1)
             self.completion.close()
             if self.devbox is not None:
@@ -434,6 +463,9 @@ class FullEditor(
         if self.jump.active:
             self._handle_jump_key(key)
             return False
+        if self.find.active:
+            self._handle_find_key(key)
+            return False
         if key == CTRL_C:
             self._copy_selection()
             return False
@@ -480,6 +512,15 @@ class FullEditor(
         if key in (CTRL_SPACE, CTRL_N) or key == curses.KEY_F12:
             self._completion_manual = True
             self._request_completion()
+            return False
+        if key == CTRL_F:
+            self._open_find_prompt()
+            return False
+        if key == curses.KEY_F3:
+            if self.find.query:
+                self._find_advance(1)
+            else:
+                self._open_find_prompt()
             return False
         if key in (curses.KEY_F9, CTRL_L):
             self.diagnostics_panel.toggle()
