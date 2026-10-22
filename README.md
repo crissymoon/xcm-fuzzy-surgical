@@ -8,390 +8,42 @@
 
 A terminal fuzzy finder with syntax highlighted results, surgical line replacement, a file browser and LSP completion.
 
-FuzzySurgical indexes a directory, searches every indexed line with a fuzzy matcher that ranks literal hits first, previews results with syntax colors, and opens the matching file at that line in one full editor on Enter. F3 opens the same editor from a safe file browser, and every save can store the previous version in a local SQLite database for recovery. The editor speaks the Language Server Protocol for completion and diagnostics, and an optional dev box file adds project linters.
+FuzzySurgical indexes a directory, searches every indexed line, and opens the matching file at that line in one full editor. Saves are snapshotted to local SQLite for recovery, and the editor speaks the Language Server Protocol for completion and diagnostics.
 
-Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
-
-| Platform | Notes |
-| --- | --- |
-| Linux and macOS | Native curses support. Use the POSIX installer. |
-| WSL and Git Bash | Runs the POSIX installer inside the Unix-like shell. |
-| Windows PowerShell and cmd | The PowerShell installer adds windows-curses and a launcher to the user PATH. |
+**Version:** 0.6.8
 
 ## Features
 
-- Fuzzy line search across every indexed text file, with literal substring matches ranked above scattered subsequences
-- Syntax highlighted results and editor context with a fallback highlighter when Pygments is unavailable
-- Preview rows scroll horizontally to the matched text instead of showing column zero
-- Mouse clicks select result and browser rows, place the caret at the clicked cell in the editor, and double clicks open the selected item
-- Drag with the mouse or trackpad to highlight text in the whole-file editor; the selection is copied shortly after dragging stops even when the terminal never reports a release, a short clipboard watch restores the whole block if the terminal replaces it with a word, and bracketed paste repairs a Cmd+V that still arrives truncated, so Ctrl+V, Cmd+V, Ctrl+C, Ctrl+X and the right-click menu all handle the full highlighted text through pbcopy, wl-copy, xclip, xsel, pbpaste or the Windows clipboard with an OSC 52 fallback
-- Wheel and trackpad scrolling works in the result list, directory picker, file browser and editor, including the older ncurses wheel-down encoding used by macOS; trackpad events are accumulated so the view follows the finger, and the editor moves the caret through the wrapped rows and keeps it in the middle of the viewport while the wheel turns
-- The editor soft-wraps long lines, so every screen row maps to a real buffer position; Up, Down, Page Up and Page Down move by wrapped row, shrinking the terminal rewraps the text, and the caret stays on the same character instead of being pushed off-screen or losing its place
-- Go-to-line queries such as src/app.py:42 jump straight to that line in the matching file
-- Fuzzy directory picker that starts from a readable directory and never traps the user in an unreadable path
-- Search results open in one full editor at the matched line, with surrounding context, a cursor and a save that proves the disk copy
-- Hybrid line numbers show the current line absolute and every other line relative to it; F7 toggles the style, --line-numbers picks the starting style, Ctrl+G jumps by a line number or by the number read above or below the caret, and the choice follows the session into the next file
-- Ctrl+F finds text in the open file, highlights every hit and moves the caret onto the match instead of only counting results; Enter or Down steps forward, Up steps back, F3 repeats after the prompt closes, and Cmd+F opens it where the terminal reports the chord
-- The editor asks the terminal for a blinking bar caret and places it only after every other row is drawn, so the cursor stays at the insertion point instead of looking like a block left behind by the status bar
-- The search view keeps a short first-run brief above the status bar while the query is empty, saying in plain words how to search and how to open a file in the editor
-- Enter, Ctrl+S and F2 save the editor buffer, and Esc asks before discarding unsaved changes
-- The editor title and the result header show the absolute path, so duplicate file names in different folders are obvious
-- Go-to-line queries say when several files share the typed name instead of silently choosing one
-- Writes keep the existing inode, so Sublime, less and tail -f see the change immediately
-- Save notice in the status bar reports the absolute file path, line, byte count and verification
-- A warning appears if another program rewrites the saved file within twenty seconds
-- Symlinked files are written through to their target and external edits are never silently overwritten
-- Files changed by other programs are picked up automatically, and F5 rebuilds the index
-- Bounded, crash safe indexing with permission, binary file and symlink loop guards
-- F3 opens a fuzzy file browser with folders and text files, safe one-folder-at-a-time navigation and symlink loop guards
-- Ctrl+N in the file browser creates a new file in the folder on screen, refuses to overwrite an existing name and opens it in the editor
-- F3 and Enter open the same full editor, which has a cursor, undo and redo, page scrolling, selection, copy, paste and syntax colors
-- Every save first stores the previous version in a local SQLite database, and F6 lists snapshots to restore
-- Snapshots stay in the user data directory instead of beside the source tree, and --no-history turns them off
-- LSP completion in the full editor through any installed server: pylsp, pyright, typescript-language-server, gopls, rust-analyzer, jdtls, clangd, bash-language-server, lua-language-server, solargraph or intelephense
-- Python servers and linters installed inside the project virtual environment are found through the running interpreter, not only through PATH
-- Java files use Eclipse JDT Language Server, detected from PATH, Homebrew or the redhat.java VS Code extension, with a longer initialize timeout
-- Ctrl+N or F12 requests completions, typing identifier characters suggests after a short delay, and Enter or Tab inserts a plain text item
-- The completion popup shows the selected item's type and documentation, and the status bar shows language server progress such as project import while a server is still loading
-- When completion does nothing the status bar names the missing server and the install command, and --lsp-doctor prints every tool it can and cannot run
-- Linters run in a separate worker after open and save: ruff, flake8, pyflakes, eslint, shellcheck, ruby -c, php -l and gofmt
-- F9 lists merged language server and linter diagnostics, and Enter jumps to the reported line
-- Optional .fuzzy-surgical/devbox.json adds servers, linters, timeouts and initialization options per project
-- Missing language servers and linters are reported in the status bar and never block editing or saving
-- Installing puts a fuzzy command on PATH, so fuzzy opens the app from any terminal and directory; fuzzy-surgical stays as the long name
-- Single file JSON metadata that regenerates this README through a checked in script
+- **[Fuzzy line search](README/DOCS/FEATS.md#fuzzy-line-search)** - Type part of a line and every indexed file is filtered as you go. Literal hits rank above scattered subsequences, the preview scrolls to the match, and file.py:42 jumps straight to a line.
+- **[Editor at the match](README/DOCS/FEATS.md#editor-at-the-match)** - Enter opens one full editor on the matched line, with soft wrap, hybrid line numbers, find that moves the caret, undo and redo, selection, copy and paste, and a caret that sits at the insertion point.
+- **[Mouse and clipboard](README/DOCS/FEATS.md#mouse-and-clipboard)** - Clicks place the caret, double clicks open a row, drags select and copy the whole block, and the wheel scrolls every view without losing the caret.
+- **[Files and history](README/DOCS/FEATS.md#files-and-history)** - F3 browses one folder at a time, Ctrl+N creates a new file in the folder on screen, and every save keeps the previous version in SQLite so F6 can restore it.
+- **[Safe writes](README/DOCS/FEATS.md#safe-writes)** - Saves keep the inode, preserve line endings and verify the disk copy. A file another program changed is reloaded instead of overwritten.
+- **[Language server and linters](README/DOCS/FEATS.md#language-server-and-linters)** - Completion and diagnostics come from any installed server, Python tools are found through the project virtual environment, and an optional dev box file sets per-project commands.
+- **[Install once, run anywhere](README/DOCS/FEATS.md#install-once-run-anywhere)** - The installers put fuzzy on PATH, so fuzzy opens the app from any terminal and directory, and fuzzy-surgical stays as the long name.
+- **[Documentation that stays small](README/DOCS/FEATS.md#documentation-that-stays-small)** - One JSON file feeds this landing page and the pages under README/DOCS, and a checked in script fails when any of them is stale.
 
-## Installation
-
-The platform installers create a local virtual environment, install dependencies and put the fuzzy command on your PATH, so typing fuzzy in any terminal opens the app. fuzzy-surgical stays available as the long name. The package is also installable with pipx or runnable straight from a checkout.
-
-### Linux, macOS, WSL and Git Bash
+## Quick start
 
 ```bash
 ./install.sh
 fuzzy
 ```
 
-- The installer writes a fuzzy launcher, usually to $HOME/.local/bin, and adds that directory to your shell PATH. fuzzy-surgical points at the same app.
-- Open a new terminal after installing so the updated PATH is visible.
+On Windows run install.ps1 in PowerShell, or use pipx install . anywhere. See [Install](README/DOCS/INSTALL.md) for every option.
 
-Installer options:
+## Documentation
 
-- `FUZZY_SURGICAL_BIN_DIR="$HOME/bin" ./install.sh`: Install the launcher somewhere else.
-- `./install.sh --uninstall`: Remove the launcher and the PATH block.
-- `./install.sh --uninstall --purge`: Also remove the local virtual environment.
-
-### Native Windows PowerShell or cmd
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install.ps1
-fuzzy
-```
-
-- The installer creates venv, installs windows-curses, writes fuzzy.cmd and fuzzy-surgical.cmd under %LOCALAPPDATA%\Programs\fuzzy-surgical and adds that folder to the user PATH.
-- Before reporting success the installer runs the generated launcher once and fails if the shim cannot start the app.
-- Open a new terminal after installing.
-
-### pipx or pip
-
-```bash
-pipx install .
-fuzzy
-```
-
-- The package exposes the fuzzy and fuzzy-surgical console scripts. Use python -m pip install . inside a virtual environment if pipx is unavailable.
-
-Installer options:
-
-- `pipx install '.[lsp]'`: Also install python-lsp-server for Python completion and diagnostics.
-- `fuzzy --lsp-doctor`: Show which language servers and linters are ready, with install commands for the rest.
-
-### Run without installing
-
-```bash
-python3 main.py
-python3 main.py ~/projects
-```
-
-- Install requirements.txt first. main.py is a thin launcher over the fuzzy_surgical package.
-
-## Quick start
-
-Run fuzzy with no arguments to open the directory picker. Type to fuzzy filter folders, press Enter to open one, then press Enter on search this directory to start indexing. Starting in the picker keeps launches from the desktop or documents folder safe.
-
-```bash
-fuzzy
-fuzzy ~/projects
-fuzzy . --extensions .py .js .md
-fuzzy . --ignore .git node_modules .venv
-fuzzy . --no-picker
-```
-
-## Command line
-
-Every flag has a safe default, so positional arguments are enough for normal use.
-
-| Flag | Value | Description |
-| --- | --- | --- |
-| directory | PATH | Directory to search. Omit it to choose a directory in the TUI. |
-| -i, --ignore | PATTERN ... | Directory names or glob patterns to skip while indexing. |
-| -e, --extensions | EXT ... | Only index these file extensions, for example .py or py. |
-| --no-picker | none | Skip the picker and search the current directory. |
-| --no-history | none | Do not store SQLite snapshots of edited files. |
-| --history-db | PATH | Use a different SQLite history database. |
-| --history-limit | INT | Snapshots kept per file. Default 25. |
-| --devbox | PATH | Dev box JSON file or project directory. Defaults to .fuzzy-surgical/devbox.json in the search root. |
-| --no-lsp | none | Disable language server completion and diagnostics. |
-| --no-linters | none | Disable background linter runs. |
-| --line-numbers | absolute \| hybrid | Start the editor with absolute numbers, or hybrid numbers with the current line absolute and the rest relative. F7 toggles it while editing. Default absolute. |
-| --lsp-doctor | none | Print every language server and linter with its detection state, then exit. Nothing is installed. |
-| --version | none | Print the installed version and exit. |
-| --max-files | INT | Maximum number of files to index. Default 8000. |
-| --max-file-size | INT | Maximum bytes read per file. Default 1000000. |
-| --max-lines-per-file | INT | Maximum lines indexed per file. Default 5000. |
-| --max-total-lines | INT | Maximum lines indexed in total. Default 500000. |
-
-## TUI controls
-
-### Search
-
-| Key | Action |
-| --- | --- |
-| Type | Fuzzy search every indexed line. Literal hits rank first and previews scroll to the match. |
-| file.py:12 | Jump to line 12 in a matching file. Partial paths, bare file names and Windows paths work. If several files share the name, the status bar names the chosen file and asks for a folder. |
-| Up / Down | Move the selection one row. |
-| Page Up / Page Down | Move the selection one page. |
-| Mouse click | Select a row. Double click opens the same editor at that line. |
-| Mouse wheel / trackpad | Scroll four rows per mouse notch. Trackpad events accumulate into smooth movement. |
-| Left / Right | Scroll long code lines horizontally. |
-| Enter | Reload the selected file from disk and open it in the editor at the matched line. |
-| F3 | Browse folders and open files in the same editor. |
-| F2 | Open the directory picker. |
-| F5 | Reload the whole index, for example after a branch switch. |
-| F1 | Show help. |
-| Ctrl+U | Clear the search. |
-| Esc | Clear the search, then quit when the search is already empty. |
-| Ctrl+X / F10 | Quit. |
-
-### Directory picker
-
-| Key | Action |
-| --- | --- |
-| Type | Fuzzy filter directories. |
-| Up / Down | Move the selection. |
-| Mouse click | Select a folder. Double click opens it. |
-| Mouse wheel / trackpad | Scroll four rows per mouse notch. Trackpad events accumulate into smooth movement. |
-| Enter | Open the selected folder or start searching the current folder. |
-| Backspace | Delete filter text, or move to the parent directory when the filter is empty. |
-| Esc | Cancel and return to the previous view. |
-
-### File browser
-
-| Key | Action |
-| --- | --- |
-| F3 | Open the browser from the search view. |
-| Type | Fuzzy filter the current folder. |
-| Up / Down | Move the selection. |
-| Mouse click | Select a row. Double click opens a folder or edits the file. |
-| Mouse wheel / trackpad | Scroll four rows per mouse notch. Trackpad events accumulate into smooth movement. |
-| Enter | Open a folder or open the selected file in the editor. |
-| Backspace | Delete filter text, or move to the parent folder when the filter is empty. |
-| Ctrl+N | Create a new file in the current folder, then open it in the editor. Type the name and press Enter; Esc cancels. |
-| Ctrl+U | Clear the filter. |
-| Esc | Return to the search view. |
-
-### Full file editor
-
-| Key | Action |
-| --- | --- |
-| Enter / F3 | Open the file from a search result at the matched line, or from the file browser. |
-| Arrows / Home / End | Move the cursor through logical and wrapped rows. The view keeps a three-row margin and lines rewrap when the terminal is resized. |
-| Page Up / Page Down | Move one page. |
-| Mouse click | Place the cursor at the clicked cell. |
-| Mouse drag | Highlight text by dragging. The whole selection is copied to the clipboard about a fifth of a second after the drag stops, and immediately on release when the terminal reports one, so the selection stays visible and Cmd+V or Ctrl+V receives all of it. A short clipboard watch puts the full text back if the terminal replaces it with a single word. Ctrl+C re-copies it. |
-| Double / triple click | Select the word or the whole line under the pointer. |
-| Ctrl+A / Ctrl+C | Select the whole file, then copy the selection. Copying uses the platform clipboard tool and falls back to an OSC 52 terminal escape. The editor keeps the exact copied text and uses it when the system clipboard holds only a word or another fragment of it. |
-| Right click | Open a menu at the pointer with Cut, Copy, Paste, Select all, Undo, Redo and Save. Shortcut letters x, c, v, a, u, r and s activate an item. Some terminals keep right click for their own menu; F10 opens the same menu from the keyboard. |
-| F10 | Open the Actions menu beside the caret when the terminal does not pass right clicks through. |
-| Ctrl+X / Ctrl+V | Cut the selection or paste at the caret. macOS terminals keep Cmd+X, Cmd+C and Cmd+V for their own menus and never forward them to a text interface, so Ctrl+X, Ctrl+C and Ctrl+V are the keys the editor receives; the Actions menu offers the same three commands, and a terminal key binding can forward the Command chords if the terminal supports it (in iTerm2, Settings, Keys, add Cmd+X with the Send Hex Code action, value 0x18). A paste replaces a selection, and typing or Backspace over a selection replaces it like a normal editor. The whole-file editor also enables bracketed paste, so the terminal's own Cmd+V arrives as one block, and a block that is only a word or another fragment of the text just copied is replaced with the editor's full verified copy. |
-| Shift+arrows | Extend the selection from the caret, with Home, End, Up and Down variants. |
-| Mouse wheel / trackpad | Scroll four screen rows per mouse notch. The caret moves through the wrapped rows and stays in the middle of the viewport, so scrolling never jumps: at the first and last line it slides toward the edge instead. |
-| Enter | Split the current line. |
-| Backspace / Delete | Delete backwards or forwards, joining lines at the edges. |
-| Tab | Insert four spaces. |
-| Ctrl+Z / Ctrl+Y | Undo and redo. |
-| F7 | Toggle absolute or hybrid line numbers. Hybrid keeps the current line absolute and counts the other lines from it. The setting carries into the next file opened in the same session. |
-| Ctrl+F / Cmd+F | Find text in the file. Every hit is highlighted and the caret moves onto the first match at or after where the prompt opened, so the view lands on the text. Enter or Down goes to the next match, Up to the previous one, Ctrl+U clears the query, and Esc closes the prompt. F3 repeats the last search after the prompt closes. macOS terminals keep Cmd+F for their own find bar, so Ctrl+F is the key the editor receives. |
-| Ctrl+G | Open the jump prompt. Type a number, then Up or Down moves that many logical lines, which is exactly the number the hybrid gutter shows above or below the caret; Enter instead goes to that absolute line number, and Esc cancels. Cmd+G and Alt+G open the prompt where the terminal reports the chord. |
-| Ctrl+N | Request completions from the language server. F12 and Ctrl+Space also work. Typing two identifier characters suggests automatically. The popup shows the selected item's type and documentation, and the status bar shows server progress. |
-| Up / Down (completions) | Choose a suggestion. Enter or Tab inserts it, Esc closes the list. |
-| F9 | Show merged language server and linter issues. Ctrl+L also works. Up / Down select, Enter jumps, F9 closes. |
-| Ctrl+S / F2 | Write and verify the disk copy, after storing the previous version in SQLite. |
-| F6 | List SQLite snapshots. Enter loads one into the buffer as unsaved text. |
-| F8 | Reload the file from disk. |
-| Esc | Ask before discarding unsaved changes. |
-| F1 | Show help. |
-
-## Language server and dev box
-
-The full editor can ask a language server for completions and show linter diagnostics. Both are optional and auto-detected, so a missing tool never blocks editing. Python tools are found through the interpreter that runs the app, which means one installed in the project virtual environment works without being on PATH. Add .fuzzy-surgical/devbox.json to the project root for per-project commands, timeouts or initialization options.
-
-`.fuzzy-surgical/devbox.json`
-
-```json
-{
-  "lsp": {
-    "enabled": true,
-    "timeout": 5,
-    "initialize_timeout": 12,
-    "options": {},
-    "servers": {
-      "python": [["pylsp"]],
-      ".go": [["gopls", "serve"]]
-    }
-  },
-  "linters": {
-    "enabled": true,
-    "timeout": 8,
-    "commands": {
-      ".py": [["ruff", "check", "--output-format=concise", "{file}"]],
-      ".js": [["eslint", "--format", "unix", "{file}"]]
-    }
-  }
-}
-```
-
-| Language | Server | Linter |
-| --- | --- | --- |
-| Python | pylsp, pyright-langserver, basedpyright-langserver | ruff, flake8, pyflakes |
-| Java | jdtls | none built in |
-| TypeScript | typescript-language-server | eslint |
-| JavaScript | typescript-language-server | eslint |
-| Go | gopls | gofmt -e |
-| Rust | rust-analyzer | none built in |
-| C and C++ | clangd | none built in |
-| Shell | bash-language-server | shellcheck |
-| Lua | lua-language-server | none built in |
-| Ruby | solargraph | ruby -c |
-| PHP | intelephense | php -l |
-
-- Ctrl+Space requests completions in the full editor. Typing two identifier characters also suggests after a short delay.
-- If completion does nothing, run fuzzy-surgical --lsp-doctor. It names each server and linter as ready or missing, prints the install command for each missing tool, and exits without starting anything.
-- Python servers and linters are also detected as modules of the running interpreter, so pip install python-lsp-server inside the project venv is enough. Java uses jdtls from PATH, Homebrew, the app cache, or the redhat.java VS Code extension.
-- A Java server needs a JDK new enough for its own build. The tested Eclipse JDT Language Server 1.49 works with Java 21 and is detected under the per-user cache directory at lsp/jdtls. Homebrew jdtls installs the JDK it needs.
-- Up and Down choose a suggestion, Enter or Tab inserts it, and Esc closes the list. Snippet completions are converted to plain text.
-- Linters run in a separate worker after a file is opened and after a save, with a timeout and capped output.
-- A custom linter command is an argv array. It is never passed through a shell. {file} is replaced with the target path, or appended when the placeholder is absent.
-- Use --devbox PATH to load a different config, --no-lsp or --no-linters to turn one half off.
-- The F9 issues list merges language server diagnostics with linter output for the current file. Enter jumps to the reported line.
-
-## Safety and limits
-
-The indexer never follows directory symlinks and skips unreadable, binary or oversized paths instead of aborting. Indexing is capped so opening a large folder cannot exhaust memory:
-
-| Limit | Default |
-| --- | --- |
-| Files | 8,000 |
-| Bytes per file | 1,000,000 |
-| Lines per file | 5,000 |
-| Lines in total | 500,000 |
-
-- Writes happen only on an explicit save key, keep the existing inode so open editors and pagers see the change, and preserve CRLF endings and a missing final newline.
-- Every save is read back through both the opened path and the real target before it is reported, and the absolute path is shown in the editor and the status bar.
-- The modification time is nudged forward when the filesystem timestamp resolution is coarse, and the containing directory is synced.
-- If another program rewrites a just saved file, the status bar says so within twenty seconds.
-- A go-to-line query that matches several files names the chosen file and asks for a folder to disambiguate.
-- Read-only files are written in place by briefly adding owner write permission, so they also keep their inode.
-- Symlinks are written through to their real target, and a file that changed on disk is reloaded instead of being overwritten.
-- Files modified by other programs are detected while the search view is idle, and F5 rebuilds the whole index.
-- The directory picker validates every target and falls back to a readable directory instead of crashing.
-- The F3 browser lists one folder at a time, skips ignored and binary files, never follows directory symlinks and caps a folder at 5000 entries.
-- The full editor refuses binary files, files over 8 MB and files over 200,000 lines instead of loading them.
-- Snapshots live in one SQLite database in the user data directory: Application Support on macOS, LOCALAPPDATA on Windows and the XDG data directory on Linux.
-- Snapshot defaults are 25 versions per file, 4 MB per snapshot and 64 MB in total, and old snapshots are pruned automatically.
-- History is best effort. A missing or locked database never blocks a save, and --no-history disables snapshots entirely.
-- Terminal resizes and small terminals are guarded, so drawing is clipped instead of raising.
-- Mouse support is optional. The app still runs when the terminal or curses build refuses mouse reporting, and every action has a keyboard equivalent. Hold Shift or Option to select text while mouse reporting is active.
-- Button-event tracking is requested directly, because several ncurses builds ask the terminal for presses and releases only. Without that request a drag cannot report motion, so highlighting would never grow. Escape sequences that a build does not understand are never requested, and tracking is turned off when the app exits.
-- Language servers and linters run as child processes in the project root. Every request has a timeout, output is capped, and processes are terminated when the session closes.
-- LSP messages are bounded by a header limit, a body limit and a message count, and malformed JSON or an early exit is reported instead of raised.
-- The dev box only reads .fuzzy-surgical/devbox.json or fuzzy-surgical.json from the search root. An invalid entry is skipped with a status message.
-- Language server commands never pass through a shell. The {python} token resolves to the interpreter running the app and {cache} to the per-user cache directory, and absolute paths or globs are expanded only when they point at an executable file.
-- Diagnostics are filtered to the file open in the editor, so a server notice about another file never appears on the current buffer.
-
-## Development
-
-The README is generated from meta/project.json. Edit the JSON, then regenerate and verify it before committing.
-
-Linux and macOS:
-
-```bash
-python3 -m venv venv
-venv/bin/python -m pip install -r requirements-dev.txt
-venv/bin/python -m pytest tests/
-venv/bin/python scripts/build_readme.py
-venv/bin/python scripts/build_readme.py --check
-venv/bin/python -m flake8 main.py fuzzy_surgical tests scripts
-```
-
-Windows PowerShell:
-
-```powershell
-py -m venv venv
-venv\Scripts\python -m pip install -r requirements-dev.txt
-venv\Scripts\python -m pytest tests/
-venv\Scripts\python scripts\build_readme.py
-venv\Scripts\python scripts\build_readme.py --check
-venv\Scripts\python -m flake8 main.py fuzzy_surgical tests scripts
-```
-
-Docker:
-
-The container harness proves a clean install and the interactive TUI. The Linux image runs anywhere Docker runs; the Windows Server Core image needs a Windows host in Windows container mode.
-
-```bash
-docker/run-tests.sh linux
-docker/run-tests.sh linux-shell
-```
-
-Windows PowerShell host:
-
-```powershell
-docker\run-tests.ps1
-docker\run-tests.ps1 -Target windows-shell
-docker\run-tests.ps1 -Isolation hyperv
-```
-
-- docker/run-tests.sh windows refuses to start on macOS or Linux because Windows containers require the Windows kernel.
-- The Linux harness runs the suite, flake8, the README check, install.sh, a headless end-to-end script and the TUI in a pseudo terminal.
-- The Windows Server Core harness runs install.ps1, the generated .cmd launcher, the Windows drive-letter paths and the suite under windows-curses.
-- The Linux harness checks the PowerShell scripts against Windows PowerShell 5.1 syntax with PSScriptAnalyzer, because Server Core does not include PowerShell 7.
-- run-tests.ps1 picks Hyper-V isolation on Windows 10 and 11 clients automatically, because the ltsc2022 image cannot share the kernel with those builds. Pass -Isolation process or -Isolation hyperv to override it.
-
-- scripts/build_readme.py --check fails when README.md is stale or when the version in meta/project.json does not match fuzzy_surgical/__init__.py.
-- Regenerate README.md with scripts/build_readme.py after editing meta/project.json, and run the --check mode before committing.
-
-## Requirements
-
-| Component | Requirement |
-| --- | --- |
-| Python | 3.9 or newer |
-| Pygments | 2.15 or newer, used for syntax highlighting |
-| curses | Included with Python on Linux and macOS. Install windows-curses on Windows. |
-| Language server | Optional. Any LSP server on PATH that speaks stdio, such as pylsp, pyright, gopls or clangd. |
-| Linters | Optional. Any of ruff, flake8, pyflakes, eslint, shellcheck, ruby, php or gofmt on PATH. |
-
-## Contributing
-
-Issues and pull requests are welcome at the repository. Keep changes focused, add tests for behavior changes, run the checks above, and regenerate the README when metadata changes.
-
-Report security sensitive issues privately to the maintainer through the website contact link instead of opening a public issue.
+- [Features](README/DOCS/FEATS.md) - Every capability in detail, from the fuzzy matcher to the dev box.
+- [Install](README/DOCS/INSTALL.md) - Each installer, the platform table and the requirements.
+- [Usage](README/DOCS/USAGE.md) - Quick start, the full command line and every TUI key in one place.
+- [Language server](README/DOCS/LANGUAGE-SERVER.md) - Server detection, the dev box file and the lsp-doctor.
+- [Safety and limits](README/DOCS/SAFETY.md) - Index caps, write guarantees and the process guard rails.
+- [Development](README/DOCS/DEVELOPMENT.md) - Tests, flake8, the Docker harnesses and the documentation build.
 
 ## License
 
 MIT License, copyright 2026 Crissy Moon. See [LICENSE](LICENSE) for the full text.
-
-## Author
 
 Crissy Moon - [https://xcaliburmoon.net/](https://xcaliburmoon.net/)
 
