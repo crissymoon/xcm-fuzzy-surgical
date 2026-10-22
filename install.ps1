@@ -20,6 +20,8 @@ $BaseDir = if ($env:LOCALAPPDATA) {
 }
 $BinDir = Join-Path $BaseDir "Programs\fuzzy-surgical"
 $Launcher = Join-Path $BinDir "$AppName.cmd"
+$ShortName = "fuzzy"
+$ShortLauncher = Join-Path $BinDir "$ShortName.cmd"
 $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 $PathParts = @($UserPath -split ";" | Where-Object { $_ })
 
@@ -34,14 +36,16 @@ function Remove-FromUserPath {
 }
 
 if ($Uninstall) {
-    if (Test-Path $Launcher) {
-        Remove-Item $Launcher -Force
+    foreach ($path in @($Launcher, $ShortLauncher)) {
+        if (Test-Path $path) {
+            Remove-Item $path -Force
+        }
+        Write-Host "Removed $path"
     }
     Remove-FromUserPath -Directory $BinDir
     if ($Purge -and (Test-Path $VenvDir)) {
         Remove-Item $VenvDir -Recurse -Force
     }
-    Write-Host "Removed $Launcher"
     if ($Purge) {
         Write-Host "Removed $VenvDir"
     }
@@ -119,6 +123,7 @@ if ($CursesExit -ne 0) {
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
 $LauncherContent = @"
 @echo off
+set "FUZZY_SURGICAL_NAME=%~n0"
 "$VenvPython" "$ProjectDir\main.py" %*
 exit /b %ERRORLEVEL%
 "@
@@ -131,18 +136,22 @@ $LauncherBytes = $LauncherEncoding.GetBytes($LauncherContent)
 if ($LauncherEncoding.GetString($LauncherBytes) -ne $LauncherContent) {
     throw "The install path has characters cmd.exe cannot execute: $ProjectDir. Move the project to an ASCII path and run install.ps1 again."
 }
-[System.IO.File]::WriteAllBytes($Launcher, $LauncherBytes)
-if (-not (Test-Path -LiteralPath $Launcher)) {
-    throw "The launcher was not written to $Launcher"
+foreach ($path in @($Launcher, $ShortLauncher)) {
+    [System.IO.File]::WriteAllBytes($path, $LauncherBytes)
+    if (-not (Test-Path -LiteralPath $path)) {
+        throw "The launcher was not written to $path"
+    }
 }
 
 # A shim that exists but cannot start the app is worse than a failed install,
-# so run it once before reporting success.
-$LauncherCheck = (& $Launcher --version 2>&1 | Out-String).Trim()
-if ($LASTEXITCODE -ne 0 -or $LauncherCheck -notlike "$AppName *") {
-    throw "The launcher at $Launcher did not run. Output: $LauncherCheck"
+# so run each one once before reporting success.
+foreach ($path in @($Launcher, $ShortLauncher)) {
+    $LauncherCheck = (& $path --version 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $LauncherCheck -notlike "fuzzy*") {
+        throw "The launcher at $path did not run. Output: $LauncherCheck"
+    }
+    Write-Host "Verified launcher: $LauncherCheck"
 }
-Write-Host "Verified launcher: $LauncherCheck"
 
 $CurrentParts = @([Environment]::GetEnvironmentVariable("Path", "User") -split ";" | Where-Object { $_ })
 if ($CurrentParts -notcontains $BinDir) {
@@ -159,8 +168,10 @@ if (-not (($env:Path -split ";") -contains $BinDir)) {
 
 Write-Host ""
 Write-Host "Installed $Launcher"
+Write-Host "Installed $ShortLauncher"
 Write-Host "Project: $ProjectDir"
 Write-Host ""
 Write-Host "Open a new terminal and run:"
-Write-Host "  $AppName"
-Write-Host "The current PowerShell session can already use the command."
+Write-Host "  $ShortName"
+Write-Host "Either name works, $AppName is kept for compatibility."
+Write-Host "The current PowerShell session can already use both commands."

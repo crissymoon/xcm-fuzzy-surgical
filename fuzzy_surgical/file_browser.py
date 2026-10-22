@@ -43,9 +43,11 @@ from fuzzy_surgical.utils import (
     read_key,
 )
 
+CTRL_N = 14
 CTRL_U = 21
 CTRL_Q = 17
 CTRL_X = 24
+NEW_FILE_LABEL = "New file: "
 
 
 class FileBrowser:
@@ -74,6 +76,8 @@ class FileBrowser:
         self.entries: List[BrowserEntry] = []
         self.error = ""
         self.notice = ""
+        self.creating = False
+        self.new_name = ""
         self.help_visible = False
         self.changed_path = ""
         self.click_tracker = ClickTracker()
@@ -92,6 +96,9 @@ class FileBrowser:
                 self.help_visible = False
                 continue
             if key == curses.KEY_RESIZE:
+                continue
+            if self.creating:
+                self._handle_create_key(key)
                 continue
             if key == MOUSE_KEY:
                 event = read_mouse(self.stdscr)
@@ -118,6 +125,8 @@ class FileBrowser:
                 self.help_visible = True
             elif is_enter(key):
                 self._activate()
+            elif key == CTRL_N:
+                self._open_create_prompt()
             elif is_backspace(key):
                 if self.query:
                     self.query = self.query[:-1]
@@ -173,6 +182,53 @@ class FileBrowser:
                 self.error = self.nav.error
             return
         self._edit_file(entry)
+
+    def _open_create_prompt(self) -> None:
+        """Start typing a new file name for the folder on screen."""
+        self.creating = True
+        self.new_name = ""
+        self.error = ""
+        self.notice = ""
+
+    def _handle_create_key(self, key) -> None:
+        if key in (curses.ascii.ESC, CTRL_X, CTRL_Q):
+            self.creating = False
+            self.new_name = ""
+            self.error = ""
+            return
+        if is_enter(key):
+            self._submit_new_file()
+            return
+        if is_backspace(key):
+            self.new_name = self.new_name[:-1]
+            return
+        if key == CTRL_U:
+            self.new_name = ""
+            return
+        char = printable_char(key)
+        if char:
+            self.new_name += char
+
+    def _submit_new_file(self) -> None:
+        path = self.nav.create_file(self.new_name)
+        if path is None:
+            self.error = self.nav.error
+            return
+        self.creating = False
+        self.new_name = ""
+        self.query = ""
+        self.error = ""
+        self.notice = "Created " + shorten(path.name, 40)
+        self._refresh()
+        self._select_path(path)
+        self._edit_file(BrowserEntry(path, path.name, "file"))
+
+    def _select_path(self, path: Path) -> None:
+        for index, entry in enumerate(self.entries):
+            if entry.path == path:
+                self.selected = index
+                self._ensure_visible()
+                return
 
     def _edit_file(self, entry: BrowserEntry) -> None:
         try:
@@ -280,10 +336,11 @@ class FileBrowser:
 
         safe_addstr(self.stdscr, 2, 0, "Filter: ", self.theme.attr("ui.accent", bold=True))
         safe_addstr(self.stdscr, 2, 8, self.query[: width - 9])
-        try:
-            self.stdscr.move(2, min(8 + len(self.query), width - 2))
-        except curses.error:
-            pass
+        if not self.creating:
+            try:
+                self.stdscr.move(2, min(8 + len(self.query), width - 2))
+            except curses.error:
+                pass
 
         safe_addstr(
             self.stdscr,
@@ -341,7 +398,20 @@ class FileBrowser:
                     self.theme.attr("ui.dim", dim=True) | base,
                 )
 
-        if self.nav.truncated:
+        if self.creating:
+            prompt = NEW_FILE_LABEL + self.new_name
+            safe_addstr(
+                self.stdscr,
+                height - 2,
+                0,
+                prompt[: width - 1],
+                self.theme.attr("ui.accent", bold=True),
+            )
+            try:
+                self.stdscr.move(height - 2, min(len(prompt), width - 2))
+            except curses.error:
+                pass
+        elif self.nav.truncated:
             safe_addstr(
                 self.stdscr,
                 height - 2,
@@ -370,9 +440,9 @@ class FileBrowser:
             self._draw_help(height, width)
 
         if width < 72:
-            left = " Enter open  Backspace up  Esc back "
+            left = " Enter open  Ctrl+N new  Esc back "
         else:
-            left = " Enter open  Backspace up  Esc back  F1 help  type to filter "
+            left = " Enter open  Ctrl+N new  Backspace up  Esc back  F1 help  type to filter "
         right = f" {len(self.entries)} items "
         padding = max(0, width - len(left) - len(right))
         bar = (left + " " * padding + right)[: width - 1]
@@ -387,6 +457,7 @@ class FileBrowser:
             "Mouse click    select a row, double click to open it",
             "Mouse wheel    scroll four rows",
             "Enter          open a folder or edit a file",
+            "Ctrl+N         create a file in this folder",
             "Backspace      delete filter text, or go up a folder",
             "Ctrl+U         clear the filter",
             "Esc            return to the search view",

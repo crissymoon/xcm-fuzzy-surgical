@@ -120,3 +120,48 @@ def test_double_click_activates_the_row(tmp_path: Path) -> None:
     now[0] = 0.3
     browser._handle_mouse(event)
     assert opened == [target]
+
+
+def test_ctrl_n_creates_a_file_and_opens_the_editor(tmp_path: Path, monkeypatch) -> None:
+    opened = []
+
+    def stub_edit_file(_screen, _theme, _history, _devbox, path, start_line=0, **_kwargs):
+        opened.append(str(path))
+        return True
+
+    keys = iter([14, "n", "e", "w", ".", "p", "y", "\n", 27])
+    monkeypatch.setattr(browser_module, "edit_file", stub_edit_file)
+    monkeypatch.setattr(browser_module, "read_key", lambda _screen: next(keys))
+
+    browser = FileBrowser(FakeScreen(), Theme(), tmp_path)
+    changed = browser.run()
+
+    created = tmp_path / "new.py"
+    assert created.is_file()
+    assert opened == [str(created)]
+    assert changed == str(created)
+
+
+def test_ctrl_n_escape_cancels_without_creating(tmp_path: Path, monkeypatch) -> None:
+    keys = iter([14, "a", "b", 27, 27])
+    monkeypatch.setattr(browser_module, "read_key", lambda _screen: next(keys))
+
+    browser = FileBrowser(FakeScreen(), Theme(), tmp_path)
+    changed = browser.run()
+
+    assert changed is None
+    assert browser.creating is False
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_ctrl_n_never_overwrites_an_existing_file(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "taken.py").write_text("x\n", encoding="utf-8")
+    keys = iter([14, "t", "a", "k", "e", "n", ".", "p", "y", "\n", 27, 27])
+    monkeypatch.setattr(browser_module, "read_key", lambda _screen: next(keys))
+
+    browser = FileBrowser(FakeScreen(), Theme(), tmp_path)
+    changed = browser.run()
+
+    assert changed is None
+    assert browser.creating is False
+    assert (tmp_path / "taken.py").read_text(encoding="utf-8") == "x\n"

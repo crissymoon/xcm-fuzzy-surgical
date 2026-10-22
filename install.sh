@@ -24,8 +24,11 @@ PROJECT_DIR="$SCRIPT_DIR"
 VENV_DIR="$PROJECT_DIR/venv"
 BIN_DIR="${FUZZY_SURGICAL_BIN_DIR:-$HOME/.local/bin}"
 LAUNCHER="$BIN_DIR/$APP_NAME"
+SHORT_NAME="fuzzy"
+ALIAS="$BIN_DIR/$SHORT_NAME"
 MANAGED_START="# >>> fuzzy-surgical >>>"
 MANAGED_END="# <<< fuzzy-surgical <<<"
+PATH_ENTRY_STATE="unchanged"
 
 usage() {
     cat <<USAGE
@@ -56,20 +59,37 @@ remove_path_block() {
 add_path_block() {
     local rc="$1"
     local line="$2"
+    local dir="$3"
+    local home_form="$dir"
+    case "$dir" in
+        "$HOME"/*) home_form="\$HOME/${dir#"$HOME"/}" ;;
+    esac
     mkdir -p "$(dirname "$rc")"
     touch "$rc"
+    # A profile that already puts the launcher directory on PATH needs no
+    # second entry, whether it spells the path out or uses $HOME. A managed
+    # block is left exactly as it was.
+    if ! grep -Fq "$MANAGED_START" "$rc" &&
+        { grep -Fq "$dir" "$rc" || grep -Fq "$home_form" "$rc"; }
+    then
+        PATH_ENTRY_STATE="already present"
+        return 0
+    fi
     if ! grep -Fq "$MANAGED_START" "$rc"; then
         {
             printf '\n%s\n' "$MANAGED_START"
             printf '%s\n' "$line"
             printf '%s\n' "$MANAGED_END"
         } >> "$rc"
+        PATH_ENTRY_STATE="added"
+    else
+        PATH_ENTRY_STATE="already present"
     fi
 }
 
 uninstall() {
     local purge="${1:-}"
-    rm -f "$LAUNCHER"
+    rm -f "$LAUNCHER" "$ALIAS"
     for rc in \
         "$HOME/.zshrc" \
         "$HOME/.bashrc" \
@@ -83,6 +103,7 @@ uninstall() {
         rm -rf "$VENV_DIR"
     fi
     printf 'Removed %s\n' "$LAUNCHER"
+    printf 'Removed %s\n' "$ALIAS"
     if [ "$purge" = "--purge" ]; then
         printf 'Removed %s\n' "$VENV_DIR"
     fi
@@ -190,19 +211,30 @@ elif command -v python3 >/dev/null 2>&1; then
 else
     PYTHON=python
 fi
+FUZZY_SURGICAL_NAME="\$(basename "\$0")"
+export FUZZY_SURGICAL_NAME
 exec "\$PYTHON" "\$PROJECT_DIR/main.py" "\$@"
 LAUNCHER_EOF
 chmod +x "$LAUNCHER"
+
+# The short name is the one people type, so it must work from any directory.
+# A symlink is preferred; Git Bash and some filesystems refuse them, so fall
+# back to a full copy of the launcher.
+rm -f "$ALIAS"
+if ! ln -s "$APP_NAME" "$ALIAS" 2>/dev/null; then
+    cp "$LAUNCHER" "$ALIAS"
+    chmod +x "$ALIAS"
+fi
 
 SHELL_NAME="$(basename "${SHELL:-sh}")"
 case "$SHELL_NAME" in
     fish)
         RC_FILE="$HOME/.config/fish/config.fish"
-        add_path_block "$RC_FILE" "fish_add_path \"$BIN_DIR\""
+        add_path_block "$RC_FILE" "fish_add_path \"$BIN_DIR\"" "$BIN_DIR"
         ;;
     zsh)
         RC_FILE="$HOME/.zshrc"
-        add_path_block "$RC_FILE" "export PATH=\"$BIN_DIR:\$PATH\""
+        add_path_block "$RC_FILE" "export PATH=\"$BIN_DIR:\$PATH\"" "$BIN_DIR"
         ;;
     bash)
         if [ "$(uname -s)" = "Darwin" ] && [ -f "$HOME/.bash_profile" ]; then
@@ -210,16 +242,17 @@ case "$SHELL_NAME" in
         else
             RC_FILE="$HOME/.bashrc"
         fi
-        add_path_block "$RC_FILE" "export PATH=\"$BIN_DIR:\$PATH\""
+        add_path_block "$RC_FILE" "export PATH=\"$BIN_DIR:\$PATH\"" "$BIN_DIR"
         ;;
     *)
         RC_FILE="$HOME/.profile"
-        add_path_block "$RC_FILE" "export PATH=\"$BIN_DIR:\$PATH\""
+        add_path_block "$RC_FILE" "export PATH=\"$BIN_DIR:\$PATH\"" "$BIN_DIR"
         ;;
 esac
 
 printf '\nInstalled %s\n' "$LAUNCHER"
 printf 'Project: %s\n' "$PROJECT_DIR"
-printf 'Shell:   %s (PATH entry added)\n' "$RC_FILE"
-printf '\nOpen a new terminal and run:\n  %s\n' "$APP_NAME"
+printf 'Shell:   %s (PATH entry %s)\n' "$RC_FILE" "$PATH_ENTRY_STATE"
+printf '\nOpen a new terminal and run:\n  %s\n' "$SHORT_NAME"
+printf 'Either name works, %s is kept for compatibility.\n' "$APP_NAME"
 printf 'Or load the PATH now:\n  source %s\n' "$RC_FILE"

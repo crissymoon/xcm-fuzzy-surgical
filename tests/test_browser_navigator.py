@@ -117,3 +117,35 @@ def test_unreadable_folder_is_reported(monkeypatch, tmp_path: Path) -> None:
 def test_unreadable_start_directory_falls_back_home() -> None:
     nav = FileBrowserNavigator(Path("/definitely/not/a/real/path"))
     assert nav.cwd.is_dir()
+
+
+def test_create_file_writes_an_empty_file_and_returns_it(tmp_path: Path) -> None:
+    nav = FileBrowserNavigator(tmp_path)
+
+    path = nav.create_file("notes.md")
+
+    assert path == tmp_path / "notes.md"
+    assert path.read_text(encoding="utf-8") == ""
+    assert nav.error == ""
+
+
+def test_create_file_never_overwrites(tmp_path: Path) -> None:
+    nav = FileBrowserNavigator(tmp_path)
+    existing = tmp_path / "keep.txt"
+    existing.write_text("do not lose this\n", encoding="utf-8")
+
+    assert nav.create_file("keep.txt") is None
+    assert "already exists" in nav.error
+    assert existing.read_text(encoding="utf-8") == "do not lose this\n"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["", "   ", ".", "..", "nested/file.py", "..\\escape.py", "bad.py."],
+)
+def test_create_file_rejects_names_that_leave_the_folder(tmp_path: Path, name: str) -> None:
+    nav = FileBrowserNavigator(tmp_path)
+
+    assert nav.create_file(name) is None
+    assert nav.error
+    assert list(tmp_path.iterdir()) == []

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -12,10 +13,31 @@ from fuzzy_surgical.history import DEFAULT_PER_FILE_LIMIT, SnapshotStore
 from fuzzy_surgical.indexer import FileIndexer, IndexLimits
 from fuzzy_surgical.utils import safe_directory, safe_start_directory
 
+PROGRAM_NAME = "fuzzy"
+LEGACY_NAME = "fuzzy-surgical"
+NAME_ENV = "FUZZY_SURGICAL_NAME"
+KNOWN_NAMES = (PROGRAM_NAME, LEGACY_NAME)
 
-def build_parser() -> argparse.ArgumentParser:
+
+def program_name() -> str:
+    """Return the command the user typed, so usage and errors match it.
+
+    Console scripts arrive with their own argv[0]. The shell and cmd
+    launchers run main.py, so they pass the name they were called by in
+    ``FUZZY_SURGICAL_NAME``.
+    """
+    declared = os.environ.get(NAME_ENV, "")
+    if declared in KNOWN_NAMES:
+        return declared
+    invoked = Path(sys.argv[0]).name
+    if invoked in KNOWN_NAMES:
+        return invoked
+    return LEGACY_NAME
+
+
+def build_parser(prog: str = PROGRAM_NAME) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="fuzzy-surgical",
+        prog=prog,
         description=(
             "Fuzzy finder with syntax highlighting and surgical line replacement. "
             "Run without a directory to pick one with fuzzy navigation."
@@ -133,15 +155,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _positive(value: int, name: str) -> Optional[int]:
+def _positive(value: int, name: str, prog: str) -> Optional[int]:
     if value <= 0:
-        print(f"fuzzy-surgical: {name} must be greater than zero", file=sys.stderr)
+        print(f"{prog}: {name} must be greater than zero", file=sys.stderr)
         return None
     return value
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
+    prog = program_name()
+    args = build_parser(prog).parse_args(argv)
 
     if args.lsp_doctor:
         from fuzzy_surgical.lsp.doctor import format_report, inspect_tools
@@ -150,10 +173,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     limits = IndexLimits(
-        max_files=_positive(args.max_files, "--max-files") or 1,
-        max_file_size=_positive(args.max_file_size, "--max-file-size") or 1,
-        max_lines_per_file=_positive(args.max_lines_per_file, "--max-lines-per-file") or 1,
-        max_total_lines=_positive(args.max_total_lines, "--max-total-lines") or 1,
+        max_files=_positive(args.max_files, "--max-files", prog) or 1,
+        max_file_size=_positive(args.max_file_size, "--max-file-size", prog) or 1,
+        max_lines_per_file=_positive(args.max_lines_per_file, "--max-lines-per-file", prog) or 1,
+        max_total_lines=_positive(args.max_total_lines, "--max-total-lines", prog) or 1,
     )
     if (
         args.max_files <= 0
@@ -162,7 +185,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         or args.max_total_lines <= 0
         or args.history_limit <= 0
     ):
-        print("fuzzy-surgical: --history-limit must be greater than zero", file=sys.stderr)
+        print(f"{prog}: --history-limit must be greater than zero", file=sys.stderr)
         return 2
 
     root: Optional[Path] = None
@@ -170,21 +193,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         root = safe_directory(args.directory)
         if root is None:
             print(
-                f"fuzzy-surgical: '{args.directory}' is not a readable directory",
+                f"{prog}: '{args.directory}' is not a readable directory",
                 file=sys.stderr,
             )
             return 2
     elif args.no_picker:
         root = safe_start_directory(Path.cwd())
         if root is None:
-            print("fuzzy-surgical: no readable directory found", file=sys.stderr)
+            print(f"{prog}: no readable directory found", file=sys.stderr)
             return 2
 
     try:
         from fuzzy_surgical.tui_controller import TUIController
     except ImportError as exc:
         print(
-            "fuzzy-surgical: the curses module is unavailable. "
+            f"{prog}: the curses module is unavailable. "
             "On Windows install it with: pip install windows-curses",
             file=sys.stderr,
         )
@@ -197,7 +220,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         enabled=not args.no_history,
     )
     if not args.no_history and not history.available:
-        print(f"fuzzy-surgical: {history.error}", file=sys.stderr)
+        print(f"{prog}: {history.error}", file=sys.stderr)
 
     indexer = FileIndexer(limits=limits)
     controller = TUIController(
@@ -214,7 +237,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     start_dir = safe_start_directory(Path.cwd()) if root is None else root
     if start_dir is None:
-        print("fuzzy-surgical: no readable starting directory", file=sys.stderr)
+        print(f"{prog}: no readable starting directory", file=sys.stderr)
         return 2
 
     try:
@@ -222,7 +245,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     except KeyboardInterrupt:
         return 130
     except Exception as exc:  # keep the terminal usable for the next command
-        print(f"fuzzy-surgical: {exc}", file=sys.stderr)
+        print(f"{prog}: {exc}", file=sys.stderr)
         return 1
     finally:
         history.close()

@@ -42,6 +42,7 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - Files changed by other programs are picked up automatically, and F5 rebuilds the index
 - Bounded, crash safe indexing with permission, binary file and symlink loop guards
 - F3 opens a fuzzy file browser with folders and text files, safe one-folder-at-a-time navigation and symlink loop guards
+- Ctrl+N in the file browser creates a new file in the folder on screen, refuses to overwrite an existing name and opens it in the editor
 - F3 and Enter open the same full editor, which has a cursor, undo and redo, page scrolling, selection, copy, paste and syntax colors
 - Every save first stores the previous version in a local SQLite database, and F6 lists snapshots to restore
 - Snapshots stay in the user data directory instead of beside the source tree, and --no-history turns them off
@@ -55,20 +56,21 @@ Works on Linux, macOS, WSL, Git Bash on Windows and native Windows PowerShell.
 - F9 lists merged language server and linter diagnostics, and Enter jumps to the reported line
 - Optional .fuzzy-surgical/devbox.json adds servers, linters, timeouts and initialization options per project
 - Missing language servers and linters are reported in the status bar and never block editing or saving
+- Installing puts a fuzzy command on PATH, so fuzzy opens the app from any terminal and directory; fuzzy-surgical stays as the long name
 - Single file JSON metadata that regenerates this README through a checked in script
 
 ## Installation
 
-The platform installers create a local virtual environment, install dependencies and expose the fuzzy-surgical command. The package is also installable with pipx or runnable straight from a checkout.
+The platform installers create a local virtual environment, install dependencies and put the fuzzy command on your PATH, so typing fuzzy in any terminal opens the app. fuzzy-surgical stays available as the long name. The package is also installable with pipx or runnable straight from a checkout.
 
 ### Linux, macOS, WSL and Git Bash
 
 ```bash
 ./install.sh
-fuzzy-surgical
+fuzzy
 ```
 
-- The installer writes a launcher, usually to $HOME/.local/bin, and adds that directory to your shell PATH.
+- The installer writes a fuzzy launcher, usually to $HOME/.local/bin, and adds that directory to your shell PATH. fuzzy-surgical points at the same app.
 - Open a new terminal after installing so the updated PATH is visible.
 
 Installer options:
@@ -81,10 +83,10 @@ Installer options:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\install.ps1
-fuzzy-surgical
+fuzzy
 ```
 
-- The installer creates venv, installs windows-curses, writes a launcher under %LOCALAPPDATA%\Programs\fuzzy-surgical and adds that folder to the user PATH.
+- The installer creates venv, installs windows-curses, writes fuzzy.cmd and fuzzy-surgical.cmd under %LOCALAPPDATA%\Programs\fuzzy-surgical and adds that folder to the user PATH.
 - Before reporting success the installer runs the generated launcher once and fails if the shim cannot start the app.
 - Open a new terminal after installing.
 
@@ -92,15 +94,15 @@ fuzzy-surgical
 
 ```bash
 pipx install .
-fuzzy-surgical
+fuzzy
 ```
 
-- The package exposes the fuzzy-surgical console script. Use python -m pip install . inside a virtual environment if pipx is unavailable.
+- The package exposes the fuzzy and fuzzy-surgical console scripts. Use python -m pip install . inside a virtual environment if pipx is unavailable.
 
 Installer options:
 
 - `pipx install '.[lsp]'`: Also install python-lsp-server for Python completion and diagnostics.
-- `fuzzy-surgical --lsp-doctor`: Show which language servers and linters are ready, with install commands for the rest.
+- `fuzzy --lsp-doctor`: Show which language servers and linters are ready, with install commands for the rest.
 
 ### Run without installing
 
@@ -113,14 +115,14 @@ python3 main.py ~/projects
 
 ## Quick start
 
-Run fuzzy-surgical with no arguments to open the directory picker. Type to fuzzy filter folders, press Enter to open one, then press Enter on search this directory to start indexing. Starting in the picker keeps launches from the desktop or documents folder safe.
+Run fuzzy with no arguments to open the directory picker. Type to fuzzy filter folders, press Enter to open one, then press Enter on search this directory to start indexing. Starting in the picker keeps launches from the desktop or documents folder safe.
 
 ```bash
-fuzzy-surgical
-fuzzy-surgical ~/projects
-fuzzy-surgical . --extensions .py .js .md
-fuzzy-surgical . --ignore .git node_modules .venv
-fuzzy-surgical . --no-picker
+fuzzy
+fuzzy ~/projects
+fuzzy . --extensions .py .js .md
+fuzzy . --ignore .git node_modules .venv
+fuzzy . --no-picker
 ```
 
 ## Command line
@@ -192,6 +194,7 @@ Every flag has a safe default, so positional arguments are enough for normal use
 | Mouse wheel / trackpad | Scroll four rows per mouse notch. Trackpad events accumulate into smooth movement. |
 | Enter | Open a folder or open the selected file in the editor. |
 | Backspace | Delete filter text, or move to the parent folder when the filter is empty. |
+| Ctrl+N | Create a new file in the current folder, then open it in the editor. Type the name and press Enter; Esc cancels. |
 | Ctrl+U | Clear the filter. |
 | Esc | Return to the search view. |
 

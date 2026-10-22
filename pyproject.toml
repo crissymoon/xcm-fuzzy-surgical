@@ -51,6 +51,7 @@ dev = [
 ]
 
 [project.scripts]
+fuzzy = "fuzzy_surgical.cli:main"
 fuzzy-surgical = "fuzzy_surgical.cli:main"
 
 [project.urls]

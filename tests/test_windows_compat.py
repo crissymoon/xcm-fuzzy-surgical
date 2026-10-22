@@ -100,7 +100,8 @@ def test_windows_launcher_uses_the_console_code_page():
 def test_installer_runs_the_launcher_before_reporting_success():
     installer = (ROOT / "install.ps1").read_text(encoding="utf-8")
 
-    assert "& $Launcher --version" in installer
+    assert "& $path --version" in installer
+    assert "@($Launcher, $ShortLauncher)" in installer
     assert "Verified launcher" in installer
     assert "did not run" in installer
 
@@ -122,3 +123,14 @@ def test_linux_image_ships_the_powershell_analyzer():
     assert "PSScriptAnalyzer" in dockerfile
     assert "PSSA_VERSION" in dockerfile
     assert "Install-Module" in dockerfile
+
+
+def test_installer_writes_the_short_fuzzy_command():
+    installer = (ROOT / "install.ps1").read_text(encoding="utf-8")
+    posix = (ROOT / "install.sh").read_text(encoding="utf-8")
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+
+    assert 'Join-Path $BinDir "$ShortName.cmd"' in installer
+    assert 'SHORT_NAME="fuzzy"' in posix
+    assert 'ln -s "$APP_NAME" "$ALIAS"' in posix
+    assert 'fuzzy = "fuzzy_surgical.cli:main"' in pyproject

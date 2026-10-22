@@ -18,6 +18,8 @@ from fuzzy_surgical.indexer import DEFAULT_IGNORE_DIRS
 from fuzzy_surgical.utils import safe_directory
 
 MAX_BROWSE_ENTRIES = 5000
+MAX_NAME_LENGTH = 255
+INVALID_NAME_CHARS = frozenset('/\\:*?"<>|')
 
 BINARY_SUFFIXES = (
     ".pyc",
@@ -54,6 +56,35 @@ BINARY_SUFFIXES = (
     ".db",
     ".bin",
 )
+
+
+def validate_new_file_name(directory: Path, name: str) -> Tuple[Optional[Path], str]:
+    """Check a name typed in the browser before anything touches the disk.
+
+    Returns ``(path, "")`` for a usable name and ``(None, message)`` otherwise.
+    Plain file names only: a separator would let Ctrl+N write outside the
+    folder the browser is showing.
+    """
+    cleaned = name.strip()
+    if not cleaned:
+        return None, "Type a file name first."
+    if cleaned in (".", ".."):
+        return None, "That name is not a file."
+    if len(cleaned) > MAX_NAME_LENGTH:
+        return None, f"That name is longer than {MAX_NAME_LENGTH} characters."
+    if any(char in INVALID_NAME_CHARS for char in cleaned):
+        return None, "Use a plain file name; open the folder first."
+    if any(ord(char) < 32 or ord(char) == 127 for char in cleaned):
+        return None, "That name has control characters."
+    if cleaned.endswith("."):
+        return None, "A file name cannot end with a dot."
+    path = Path(directory) / cleaned
+    try:
+        if path.exists():
+            return None, f"{cleaned} already exists."
+    except OSError:
+        return None, "That name cannot be checked."
+    return path, ""
 
 
 @dataclass(frozen=True)
@@ -130,6 +161,28 @@ class FileBrowserNavigator:
     def navigation_rows(self, query: str) -> int:
         """Rows that should not be auto-selected when typing a filter."""
         return 1 if self.has_parent() and not query else 0
+
+    def create_file(self, name: str) -> Optional[Path]:
+        """Create an empty file in the current folder and return its path.
+
+        Opens with ``x`` so an existing file is never truncated, even when it
+        appeared between the validation and the write.
+        """
+        path, error = validate_new_file_name(self._cwd, name)
+        if path is None:
+            self.error = error
+            return None
+        try:
+            with path.open("x", encoding="utf-8"):
+                pass
+        except FileExistsError:
+            self.error = f"{path.name} already exists."
+            return None
+        except OSError as exc:
+            self.error = f"Could not create {path.name}: {exc}"
+            return None
+        self.error = ""
+        return path
 
     def _parent_entry(self) -> Optional[BrowserEntry]:
         if not self.has_parent():
